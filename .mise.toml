@@ -1,0 +1,2 @@
+[tools]
+mold = { version = "2.41.0", os = ["linux"] }

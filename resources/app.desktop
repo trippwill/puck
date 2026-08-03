@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Puck
+Comment=Dynamically structured notes
+Type=Application
+Icon=dev.terranul.puck
+Exec=puck %F
+Terminal=false
+StartupNotify=true
+Categories=COSMIC
+Keywords=COSMIC
+MimeType=
