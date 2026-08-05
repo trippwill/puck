@@ -4,6 +4,8 @@ use clap::Args;
 use clap::Parser;
 use clap::Subcommand;
 
+use puck::document::Document;
+
 #[derive(Debug, Parser)]
 #[command(version, about)]
 struct Cli {
@@ -28,9 +30,11 @@ struct DocumentArgs {
 #[derive(Debug, Subcommand)]
 enum DocumentCommands {
     New { file: PathBuf },
+    Open { file: PathBuf },
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let args = Cli::parse();
     tracing_subscriber::fmt()
         .with_max_level(args.verbosity)
@@ -40,7 +44,27 @@ fn main() {
         Commands::Document(document_args) => match document_args.command {
             DocumentCommands::New { file } => {
                 tracing::info!("Creating new document: {:?}", file);
-                // Implement the logic for creating a new document here
+                match Document::create(&file).await {
+                    Ok(_) => {
+                        tracing::info!("Document created successfully.");
+                        println!("Document created successfully at: {:?}", file);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to create document: {}", e);
+                    }
+                }
+            }
+            DocumentCommands::Open { file } => {
+                tracing::info!("Opening document: {:?}", file);
+                match Document::open(&file).await {
+                    Ok(_) => {
+                        tracing::info!("Document opened successfully.");
+                        println!("Document opened successfully at: {:?}", file);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to open document: {}", e);
+                    }
+                }
             }
         },
     }
