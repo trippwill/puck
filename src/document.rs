@@ -24,9 +24,14 @@ impl From<tokio_rusqlite::rusqlite::Error> for DocumentError {
 }
 
 #[derive(Debug)]
-pub enum Document {
-    Closed(PathBuf),
-    Open(DocHandle),
+pub struct Document {
+    path: PathBuf,
+    conn: Connection,
+}
+
+enum ConnectKind {
+    Create,
+    Open,
 }
 
 impl Document {
@@ -47,8 +52,8 @@ impl Document {
         // to reserve the filename atomically.
         drop(file);
 
-        match DocHandle::connect(&path, true).await {
-            Ok(handle) => Ok(Self::Open(handle)),
+        match Self::connect(&path, ConnectKind::Create).await {
+            Ok(doc) => Ok(doc),
             Err(e) => {
                 // If we fail to open the document, we should remove the file to avoid leaving a
                 // corrupted or unusable file behind.
@@ -64,22 +69,16 @@ impl Document {
     ///
     /// Returns an error when `SQLite` cannot open or configure the document.
     pub async fn open(path: impl AsRef<Path>) -> Result<Self, DocumentError> {
-        Ok(Self::Open(DocHandle::connect(path, false).await?))
+        Self::connect(path, ConnectKind::Open).await
     }
-}
 
-#[derive(Debug)]
-pub struct DocHandle {
-    path: PathBuf,
-    conn: Connection,
-}
-
-impl DocHandle {
-    async fn connect(path: impl AsRef<Path>, new: bool) -> Result<Self, DocumentError> {
+    async fn connect(path: impl AsRef<Path>, ck: ConnectKind) -> Result<Self, DocumentError> {
         let path = path.as_ref().to_path_buf();
-        let conn = match new {
-            true => Connection::open(&path).await?,
-            false => Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_WRITE).await?,
+        let conn = match ck {
+            ConnectKind::Create => Connection::open(&path).await?,
+            ConnectKind::Open => {
+                Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_WRITE).await?
+            }
         };
 
         let application_id = conn
@@ -93,7 +92,7 @@ impl DocHandle {
                   ",
                 )?;
 
-                if new {
+                if let ConnectKind::Create = ck {
                     c.pragma_update(None, "application_id", APPLICATION_ID)?;
                     // TODO: Create the necessary tables and schema for a new document here.
                 }
@@ -107,12 +106,23 @@ impl DocHandle {
             return Err(DocumentError::InvalidFile(path));
         }
 
-        Ok(Self { conn, path })
+        Ok(Self { path, conn })
     }
 
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Closes the document and releases any associated resources.
+    pub fn close(self) {
+        drop(self);
+    }
+}
+
+impl Drop for Document {
+    fn drop(&mut self) {
+        tracing::trace!("Closing document {:?}", self.path());
     }
 }
 
@@ -125,9 +135,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("puck-{}.db", uuid::Uuid::now_v7()));
         assert!(Document::open(&path).await.is_err());
 
-        let Document::Open(document) = Document::create(&path).await.unwrap() else {
-            unreachable!();
-        };
+        let document = Document::create(&path).await.unwrap();
 
         let application_id = document
             .conn

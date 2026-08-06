@@ -27,6 +27,11 @@ pub struct PileNote {
 }
 
 impl PileNote {
+    /// Creates a new note with the given body.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the body is empty or consists only of whitespace.
     pub fn create(body: impl Into<String>) -> Result<Self, NoteError> {
         let now = OffsetDateTime::now_utc();
         let body = validate_body(body.into())?;
@@ -39,6 +44,11 @@ impl PileNote {
         })
     }
 
+    /// Restores a note from persisted data.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the body is empty, the revision is zero, or the timestamps are invalid (e.g., `updated_at` is before `created_at`).
     pub fn restore(
         id: NoteId,
         body: String,
@@ -62,6 +72,11 @@ impl PileNote {
         }
     }
 
+    /// Edits the note with a new body.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the body is empty or consists only of whitespace, or if the revision counter overflows.
     pub fn edit(&self, body: impl Into<String>) -> Result<Self, NoteError> {
         let body = validate_body(body.into())?;
         let revision = self

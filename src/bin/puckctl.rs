@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 use clap::Args;
 use clap::Parser;
@@ -18,6 +19,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    // Manage Puck documents.
+    #[command(visible_alias = "doc")]
     Document(DocumentArgs),
 }
 
@@ -29,12 +32,14 @@ struct DocumentArgs {
 
 #[derive(Debug, Subcommand)]
 enum DocumentCommands {
+    // Create a new Puck document.
     New { file: PathBuf },
-    Open { file: PathBuf },
+    // Validate an existing Puck document.
+    Check { file: PathBuf },
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> ExitCode {
     let args = Cli::parse();
     tracing_subscriber::fmt()
         .with_max_level(args.verbosity)
@@ -45,24 +50,32 @@ async fn main() {
             DocumentCommands::New { file } => {
                 tracing::info!("Creating new document: {:?}", file);
                 match Document::create(&file).await {
-                    Ok(_) => {
+                    Ok(d) => {
                         tracing::info!("Document created successfully.");
-                        println!("Document created successfully at: {:?}", file);
+                        println!("Document created successfully at: {:?}", file.display());
+                        tracing::trace!("Document path: {:?}", d.path());
+                        ExitCode::SUCCESS
                     }
                     Err(e) => {
                         tracing::error!("Failed to create document: {}", e);
+                        ExitCode::FAILURE
                     }
                 }
             }
-            DocumentCommands::Open { file } => {
+            DocumentCommands::Check { file } => {
                 tracing::info!("Opening document: {:?}", file);
                 match Document::open(&file).await {
-                    Ok(_) => {
+                    Ok(d) => {
                         tracing::info!("Document opened successfully.");
-                        println!("Document opened successfully at: {:?}", file);
+                        println!("Document opened successfully at: {:?}", file.display());
+                        tracing::trace!("Document path: {:?}", d.path());
+                        d.close();
+                        tracing::debug!("Document closed.");
+                        ExitCode::SUCCESS
                     }
                     Err(e) => {
                         tracing::error!("Failed to open document: {}", e);
+                        ExitCode::FAILURE
                     }
                 }
             }

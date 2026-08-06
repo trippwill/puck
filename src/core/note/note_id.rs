@@ -16,6 +16,7 @@ impl NoteId {
         Self(value)
     }
 
+    #[must_use]
     pub const fn as_uuid(&self) -> Uuid {
         self.0
     }
