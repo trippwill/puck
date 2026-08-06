@@ -1,11 +1,8 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::Args;
-use clap::Parser;
-use clap::Subcommand;
-
-use puck::document::Document;
+use clap::{Args, Parser, Subcommand};
+use puck::data::Document;
 
 #[derive(Debug, Parser)]
 #[command(version, about)]
@@ -41,9 +38,7 @@ enum DocumentCommands {
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = Cli::parse();
-    tracing_subscriber::fmt()
-        .with_max_level(args.verbosity)
-        .init();
+    tracing_subscriber::fmt().with_max_level(args.verbosity).init();
 
     match args.command {
         Commands::Document(document_args) => match document_args.command {
@@ -53,7 +48,11 @@ async fn main() -> ExitCode {
                     Ok(d) => {
                         tracing::info!("Document created successfully.");
                         println!("Document created successfully at: {:?}", file.display());
-                        tracing::trace!("Document path: {:?}", d.path());
+                        tracing::trace!(
+                            "Document path: {:?}, version: {:?}",
+                            d.path(),
+                            d.version()
+                        );
                         ExitCode::SUCCESS
                     }
                     Err(e) => {
@@ -68,8 +67,12 @@ async fn main() -> ExitCode {
                     Ok(d) => {
                         tracing::info!("Document opened successfully.");
                         println!("Document opened successfully at: {:?}", file.display());
-                        tracing::trace!("Document path: {:?}", d.path());
-                        d.close();
+                        tracing::trace!(
+                            "Document path: {:?}, version: {:?}",
+                            d.path(),
+                            d.version()
+                        );
+                        drop(d);
                         tracing::debug!("Document closed.");
                         ExitCode::SUCCESS
                     }

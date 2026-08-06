@@ -4,6 +4,4 @@ mod note_id;
 mod pile_note;
 
 pub use note_id::NoteId;
-pub use pile_note::NoteError;
-pub use pile_note::PileNote;
-pub use pile_note::PileNoteSummary;
+pub use pile_note::{NoteError, PileNote, PileNoteSummary};

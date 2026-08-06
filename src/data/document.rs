@@ -1,11 +1,15 @@
-#![allow(dead_code)]
-
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
-use thiserror::Error;
-use tokio_rusqlite::{Connection, rusqlite::OpenFlags};
+
+use tokio_rusqlite::{Connection, OpenFlags};
+
+use super::version::Version;
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"PUCK");
+const CURRENT_VERSION: Version = Version { release: 0, schema: 0, migration: 0 };
+const MINIMUM_COMPATIBLE_VERSION: Version = Version { release: 0, schema: 0, migration: 0 };
+
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum DocumentError {
@@ -15,6 +19,8 @@ pub enum DocumentError {
     InvalidFile(PathBuf),
     #[error("I/O error: {0}")]
     IoError(#[from] std::io::Error),
+    #[error("Version mismatch for file {0}: expected at least {1}, found {2}")]
+    VersionError(PathBuf, Version, Version),
 }
 
 impl From<tokio_rusqlite::rusqlite::Error> for DocumentError {
@@ -22,11 +28,11 @@ impl From<tokio_rusqlite::rusqlite::Error> for DocumentError {
         DocumentError::SqliteError(err.into())
     }
 }
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Document {
     path: PathBuf,
     conn: Connection,
+    version: Version,
 }
 
 enum ConnectKind {
@@ -34,19 +40,18 @@ enum ConnectKind {
     Open,
 }
 
+struct ConnectResult(i32, Version);
+
 impl Document {
     /// Creates and opens a Puck document.
     ///
     /// # Errors
     ///
     /// Returns an error when `SQLite` cannot create or configure the document.
-    pub async fn create(path: impl AsRef<Path>) -> Result<Self, DocumentError> {
+    pub async fn create(path: impl AsRef<Path>) -> Result<Self, super::DocumentError> {
         let path = path.as_ref().to_path_buf();
 
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)?;
+        let file = OpenOptions::new().write(true).create_new(true).open(&path)?;
 
         // SQLite will open the file and write its header. We needed this
         // to reserve the filename atomically.
@@ -81,7 +86,7 @@ impl Document {
             }
         };
 
-        let application_id = conn
+        let ConnectResult(app_id, version) = conn
             .call(move |c| {
                 c.busy_timeout(std::time::Duration::from_secs(1))?;
                 c.execute_batch(
@@ -94,19 +99,36 @@ impl Document {
 
                 if let ConnectKind::Create = ck {
                     c.pragma_update(None, "application_id", APPLICATION_ID)?;
+                    c.pragma_update(None, "user_version", i32::from(CURRENT_VERSION))?;
                     // TODO: Create the necessary tables and schema for a new document here.
                 }
 
-                c.pragma_query_value(None, "application_id", |row| row.get::<_, i32>(0))
+                let app_id =
+                    c.pragma_query_value(None, "application_id", |row| row.get::<_, i32>(0))?;
+                let user_version =
+                    c.pragma_query_value(None, "user_version", |row| row.get::<_, i32>(0))?;
+                let version = Version::from_i32(user_version);
+
+                Ok(ConnectResult(app_id, version))
             })
             .await?;
 
-        if application_id != APPLICATION_ID {
+        if app_id != APPLICATION_ID {
             conn.close().await?;
             return Err(DocumentError::InvalidFile(path));
         }
 
-        Ok(Self { path, conn })
+        if version > CURRENT_VERSION {
+            conn.close().await?;
+            return Err(DocumentError::InvalidFile(path));
+        }
+
+        if version < MINIMUM_COMPATIBLE_VERSION {
+            conn.close().await?;
+            return Err(DocumentError::VersionError(path, MINIMUM_COMPATIBLE_VERSION, version));
+        }
+
+        Ok(Self { path, conn, version })
     }
 
     #[must_use]
@@ -114,9 +136,9 @@ impl Document {
         &self.path
     }
 
-    /// Closes the document and releases any associated resources.
-    pub fn close(self) {
-        drop(self);
+    #[must_use]
+    pub fn version(&self) -> Version {
+        self.version
     }
 }
 

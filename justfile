@@ -65,6 +65,9 @@ check *args:
 # Runs a clippy check with JSON message format
 check-json: (check '--message-format=json')
 
+fmt *args:
+    cargo +nightly fmt --all {{args}}
+
 # Run the application for testing purposes
 run *args:
     env RUST_BACKTRACE=full CARGO_PROFILE_RELEASE_LTO=off RUSTFLAGS="-C link-arg=-fuse-ld=mold" cargo run --release --locked {{args}}

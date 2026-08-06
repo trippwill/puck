@@ -35,20 +35,15 @@ impl PileNote {
     pub fn create(body: impl Into<String>) -> Result<Self, NoteError> {
         let now = OffsetDateTime::now_utc();
         let body = validate_body(body.into())?;
-        Ok(Self {
-            id: NoteId::new(),
-            body,
-            revision: 1,
-            created_at: now,
-            updated_at: now,
-        })
+        Ok(Self { id: NoteId::new(), body, revision: 1, created_at: now, updated_at: now })
     }
 
     /// Restores a note from persisted data.
     ///
     /// # Errors
     ///
-    /// Returns an error if the body is empty, the revision is zero, or the timestamps are invalid (e.g., `updated_at` is before `created_at`).
+    /// Returns an error if the body is empty, the revision is zero, or the timestamps are invalid
+    /// (e.g., `updated_at` is before `created_at`).
     pub fn restore(
         id: NoteId,
         body: String,
@@ -62,13 +57,7 @@ impl PileNote {
         }
         match revision {
             0 => Err(NoteError::InvalidRevision),
-            _ => Ok(Self {
-                id,
-                body,
-                revision,
-                created_at,
-                updated_at,
-            }),
+            _ => Ok(Self { id, body, revision, created_at, updated_at }),
         }
     }
 
@@ -76,21 +65,13 @@ impl PileNote {
     ///
     /// # Errors
     ///
-    /// Returns an error if the body is empty or consists only of whitespace, or if the revision counter overflows.
+    /// Returns an error if the body is empty or consists only of whitespace, or if the revision
+    /// counter overflows.
     pub fn edit(&self, body: impl Into<String>) -> Result<Self, NoteError> {
         let body = validate_body(body.into())?;
-        let revision = self
-            .revision
-            .checked_add(1)
-            .ok_or(NoteError::RevisionOverflow)?;
+        let revision = self.revision.checked_add(1).ok_or(NoteError::RevisionOverflow)?;
         let updated_at = OffsetDateTime::now_utc();
-        Ok(Self {
-            id: self.id,
-            body,
-            revision,
-            created_at: self.created_at,
-            updated_at,
-        })
+        Ok(Self { id: self.id, body, revision, created_at: self.created_at, updated_at })
     }
 
     #[must_use]
@@ -120,11 +101,7 @@ impl PileNote {
 }
 
 fn validate_body(body: String) -> Result<String, NoteError> {
-    if body.trim().is_empty() {
-        Err(NoteError::Empty)
-    } else {
-        Ok(body)
-    }
+    if body.trim().is_empty() { Err(NoteError::Empty) } else { Ok(body) }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,12 +127,7 @@ impl From<&PileNote> for PileNoteSummary {
             preview.push('…');
         }
 
-        Self {
-            id: note.id(),
-            preview,
-            revision: note.revision(),
-            updated_at: note.updated_at(),
-        }
+        Self { id: note.id(), preview, revision: note.revision(), updated_at: note.updated_at() }
     }
 }
 

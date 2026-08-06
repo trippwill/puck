@@ -1,5 +1,7 @@
 # Copilot instructions for Puck
 
+API Compatibility is NOT a concern until there has been a release.
+
 ## Commands
 
 - Build release: `just` or `just build-release`

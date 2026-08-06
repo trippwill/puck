@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use crate::config::Config;
-use crate::fl;
+use std::collections::HashMap;
+use std::time::Duration;
+
 use cosmic::app::context_drawer;
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::iced::alignment::{Horizontal, Vertical};
 use cosmic::iced::{Alignment, Length, Subscription, futures};
 use cosmic::prelude::*;
-use cosmic::widget::{self, about::About, icon, menu, nav_bar};
+use cosmic::widget::about::About;
+use cosmic::widget::{self, icon, menu, nav_bar};
 use futures::SinkExt;
-use std::collections::HashMap;
-use std::time::Duration;
+
+use crate::config::Config;
+use crate::fl;
 
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const APP_ICON: &[u8] = include_bytes!("../resources/icons/hicolor/scalable/apps/icon.svg");
@@ -27,6 +30,7 @@ pub struct AppModel {
     /// Contains items assigned to the nav bar panel.
     nav: nav_bar::Model,
     /// Key bindings for the application's menu bar.
+    #[allow(clippy::zero_sized_map_values)]
     key_binds: HashMap<menu::KeyBind, MenuAction>,
     /// Configuration data that persists between application runs.
     config: Config,
@@ -50,10 +54,8 @@ pub enum Message {
 impl cosmic::Application for AppModel {
     /// The async executor that will be used to run your application's commands.
     type Executor = cosmic::executor::Default;
-
     /// Data that your application receives to its init method.
     type Flags = ();
-
     /// Messages which the application and its widgets will emit.
     type Message = Message;
 
@@ -180,12 +182,8 @@ impl cosmic::Application for AppModel {
                 let counter_label = ["Watch: ", self.time.to_string().as_str()].concat();
                 let section = cosmic::widget::settings::section().add(
                     cosmic::widget::settings::item::builder(counter_label).control(
-                        widget::button::text(if self.watch_is_active {
-                            "Stop"
-                        } else {
-                            "Start"
-                        })
-                        .on_press(Message::ToggleWatch),
+                        widget::button::text(if self.watch_is_active { "Stop" } else { "Start" })
+                            .on_press(Message::ToggleWatch),
                     ),
                 );
 
@@ -246,15 +244,13 @@ impl cosmic::Application for AppModel {
         // Add subscriptions which are always active.
         let mut subscriptions = vec![
             // Watch for application configuration changes.
-            self.core()
-                .watch_config::<Config>(Self::APP_ID)
-                .map(|update| {
-                    // for why in update.errors {
-                    //     tracing::error!(?why, "app config error");
-                    // }
+            self.core().watch_config::<Config>(Self::APP_ID).map(|update| {
+                // for why in update.errors {
+                //     tracing::error!(?why, "app config error");
+                // }
 
-                    Message::UpdateConfig(update.config)
-                }),
+                Message::UpdateConfig(update.config)
+            }),
         ];
 
         // Conditionally enables a timer that emits a message every second.
