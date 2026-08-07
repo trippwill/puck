@@ -27,6 +27,11 @@ API Compatibility is NOT a concern until there has been a release.
 ## Conventions
 
 - Use Rust 2024 and keep `Cargo.lock` authoritative; existing commands use `--locked`.
+- Write type documentation in the style of `Document`: open with a short noun phrase that says
+  what the type is (for example, `An open Puck document.`), then explain ownership, invariants, or
+  construction only when useful.
+- Do not begin doc comments with filler such as "Represents a...", "This struct...", or "A struct
+  that...". Describe behavior and constraints rather than restating the declaration.
 - Do not infer product requirements from the demo GUI pages, timer, or placeholder app ID.
 - New COSMIC UI state should be explicit fields on `AppModel`, with user events added to `Message` and handled in `update`.
 - Long-running UI work belongs in `subscription()` and emits `Message` values rather than spawning detached tasks from widgets.

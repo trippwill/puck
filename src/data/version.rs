@@ -9,7 +9,7 @@ pub struct Version {
 
 impl Version {
     #[must_use]
-    pub fn new(release: u8, schema: u8, migration: u16) -> Self {
+    pub const fn new(release: u8, schema: u8, migration: u16) -> Self {
         Self { release, schema, migration }
     }
 
