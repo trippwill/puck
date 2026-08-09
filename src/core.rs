@@ -9,7 +9,7 @@
 //! ```
 //! use indexmap::indexset;
 //! use puck::core::{
-//!     BooleanFieldDescription, Collection, PileNote, PileNoteSummary, RecordField, RecordSchema,
+//!     BooleanFieldDescription, Collection, NoteSummary, PileNote, RecordField, RecordSchema,
 //!     TextFieldDescription,
 //! };
 //!
@@ -34,8 +34,8 @@
 //! inventory.insert(&machine)?;
 //! assert!(inventory.contains(&machine));
 //!
-//! let note = PileNote::create("Provision puck.local")?;
-//! let summary = PileNoteSummary::from(&note);
+//! let note = PileNote::create("Provision puck.local");
+//! let summary = NoteSummary::from(&note);
 //! assert_eq!(summary.preview, "Provision puck.local");
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -97,6 +97,6 @@ pub use field::{
     FieldId, IntegerField, IntegerFieldDescription, TextField, TextFieldDescription, TimeField,
     TimeFieldDescription,
 };
-pub use note::{MAX_PREVIEW_CHARS, NoteError, NoteId, PileNote, PileNoteSummary};
+pub use note::{ArchiveNote, MAX_PREVIEW_CHARS, NoteError, NoteId, NoteSummary, PileNote};
 pub use record::{Record, RecordError, RecordField, RecordId, RecordSchema, RecordSchemaId};
 pub(crate) use uuidv7_id;

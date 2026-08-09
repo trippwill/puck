@@ -11,10 +11,6 @@ uuidv7_id!(NoteId);
 /// An error creating, restoring, or editing a pile note.
 #[derive(Debug, Error)]
 pub enum NoteError {
-    /// The note body is empty or whitespace.
-    #[error("Note body cannot be empty")]
-    Empty,
-
     /// A restored revision is zero.
     #[error("Note revision must be greater than zero")]
     InvalidRevision,
@@ -28,33 +24,110 @@ pub enum NoteError {
     InvalidTimestamp,
 }
 
-/// An immutable revision of a free-form pile note.
+mod sealed {
+    pub trait NoteState: Clone + PartialEq + Eq {}
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PileNote {
+pub struct Pile;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Archive;
+
+impl sealed::NoteState for Pile {}
+impl sealed::NoteState for Archive {}
+
+/// An immutable revision of a free-form note in the pile.
+pub type PileNote = Note<Pile>;
+/// An immutable revision of a free-form note in the archive.
+pub type ArchiveNote = Note<Archive>;
+
+/// An immutable revision of a free-form note.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Note<T: sealed::NoteState> {
     id: NoteId,
     body: String,
     revision: u64,
     created_at: OffsetDateTime,
     updated_at: OffsetDateTime,
+    _marker: std::marker::PhantomData<T>,
 }
 
-impl PileNote {
+impl Note<Pile> {
     /// Creates a new note with the given body.
+    pub fn create(body: impl Into<String>) -> Self {
+        let now = OffsetDateTime::now_utc();
+        Self {
+            id: NoteId::new(),
+            body: body.into(),
+            revision: 1,
+            created_at: now,
+            updated_at: now,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    /// Edits the note with a new body.
     ///
     /// # Errors
     ///
-    /// Returns an error if the body is empty or consists only of whitespace.
-    pub fn create(body: impl Into<String>) -> Result<Self, NoteError> {
-        let now = OffsetDateTime::now_utc();
-        let body = validate_body(body.into())?;
-        Ok(Self { id: NoteId::new(), body, revision: 1, created_at: now, updated_at: now })
+    /// Returns an error if the revision counter overflows.
+    /// See [`PileNote::recover_revision_overflow`] for a way to recover from this error.
+    pub fn edit(&self, body: impl Into<String>) -> Result<Self, NoteError> {
+        let revision = self.revision.checked_add(1).ok_or(NoteError::RevisionOverflow)?;
+        let updated_at = OffsetDateTime::now_utc();
+        Ok(Self {
+            id: self.id,
+            body: body.into(),
+            revision,
+            created_at: self.created_at,
+            updated_at,
+            _marker: std::marker::PhantomData,
+        })
     }
 
+    pub fn recover_revision_overflow(&self) -> Self {
+        let updated_at = OffsetDateTime::now_utc();
+        Self {
+            id: NoteId::new(),
+            body: self.body.clone(),
+            revision: 1,
+            created_at: self.created_at,
+            updated_at,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    pub fn archive(self) -> Note<Archive> {
+        Note {
+            id: self.id,
+            body: self.body.clone(),
+            revision: self.revision,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl Note<Archive> {
+    pub fn unarchive(self) -> Note<Pile> {
+        Note {
+            id: self.id,
+            body: self.body.clone(),
+            revision: self.revision,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T: sealed::NoteState> Note<T> {
     /// Restores a note from persisted data.
     ///
     /// # Errors
     ///
-    /// Returns an error if the body is empty, the revision is zero, or the timestamps are invalid
+    /// Returns an error if the revision is zero, or the timestamps are invalid
     /// (e.g., `updated_at` is before `created_at`).
     pub fn restore(
         id: NoteId,
@@ -63,27 +136,20 @@ impl PileNote {
         created_at: OffsetDateTime,
         updated_at: OffsetDateTime,
     ) -> Result<Self, NoteError> {
-        let body = validate_body(body)?;
         if updated_at < created_at {
             return Err(NoteError::InvalidTimestamp);
         }
         match revision {
             0 => Err(NoteError::InvalidRevision),
-            _ => Ok(Self { id, body, revision, created_at, updated_at }),
+            _ => Ok(Self {
+                id,
+                body,
+                revision,
+                created_at,
+                updated_at,
+                _marker: std::marker::PhantomData,
+            }),
         }
-    }
-
-    /// Edits the note with a new body.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the body is empty or consists only of whitespace, or if the revision
-    /// counter overflows.
-    pub fn edit(&self, body: impl Into<String>) -> Result<Self, NoteError> {
-        let body = validate_body(body.into())?;
-        let revision = self.revision.checked_add(1).ok_or(NoteError::RevisionOverflow)?;
-        let updated_at = OffsetDateTime::now_utc();
-        Ok(Self { id: self.id, body, revision, created_at: self.created_at, updated_at })
     }
 
     /// Returns the note ID.
@@ -117,13 +183,9 @@ impl PileNote {
     }
 }
 
-fn validate_body(body: String) -> Result<String, NoteError> {
-    if body.trim().is_empty() { Err(NoteError::Empty) } else { Ok(body) }
-}
-
-/// A compact pile-note projection for lists and search results.
+/// A compact note projection for lists and search results.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PileNoteSummary {
+pub struct NoteSummary {
     /// The source note ID.
     pub id: NoteId,
     /// The first line, truncated to [`MAX_PREVIEW_CHARS`] characters.
@@ -134,8 +196,8 @@ pub struct PileNoteSummary {
     pub updated_at: OffsetDateTime,
 }
 
-impl From<&PileNote> for PileNoteSummary {
-    fn from(note: &PileNote) -> Self {
+impl<T: sealed::NoteState> From<&Note<T>> for NoteSummary {
+    fn from(note: &Note<T>) -> Self {
         let first_line = note.body().lines().next().unwrap_or_default();
         let mut preview: String = first_line.chars().take(MAX_PREVIEW_CHARS).collect();
 
@@ -152,17 +214,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_body_should_return_error() {
-        let cases = vec!["", "   ", "\n", "\t"];
-        for case in cases {
-            let result = PileNote::create(case);
-            assert!(matches!(result, Err(NoteError::Empty)));
-        }
-    }
-
-    #[test]
     fn edit_should_increment_revision() {
-        let note = PileNote::create("Initial body").expect("valid note");
+        let note = Note::create("Initial body");
         let updated_note = note.edit("Updated body").expect("valid edit");
         assert_eq!(updated_note.revision(), note.revision() + 1);
         assert_eq!(updated_note.body(), "Updated body");
@@ -173,7 +226,7 @@ mod tests {
 
     #[test]
     fn edit_revision_overflow_should_return_error() {
-        let note = PileNote::create("Initial body").expect("valid note");
+        let note = Note::create("Initial body");
         let mut updated_note = note.clone();
         updated_note.revision = u64::MAX;
         let result = updated_note.edit("Updated body");
@@ -196,11 +249,12 @@ mod tests {
         let updated_at = created_at + time::Duration::SECOND;
 
         assert!(matches!(
-            PileNote::restore(id, String::from("Body"), 2, updated_at, created_at),
+            ArchiveNote::restore(id, String::from("Body"), 2, updated_at, created_at),
             Err(NoteError::InvalidTimestamp)
         ));
 
-        let note = PileNote::restore(id, String::from("Body"), 2, created_at, updated_at).unwrap();
+        let note =
+            ArchiveNote::restore(id, String::from("Body"), 2, created_at, updated_at).unwrap();
         assert_eq!(note.id(), id);
         assert_eq!(note.body(), "Body");
         assert_eq!(note.revision(), 2);
@@ -210,17 +264,48 @@ mod tests {
 
     #[test]
     fn summary_uses_and_truncates_only_the_first_line() {
-        let short = PileNote::create(
-            "Short title\nThis second line is deliberately much longer than the preview limit and \
-             must not affect truncation",
-        )
-        .unwrap();
-        assert_eq!(PileNoteSummary::from(&short).preview, "Short title");
+        let short = Note::create(
+            r#"Short title
+            This second line is deliberately much longer than the preview limit and must not affect truncation"#,
+        );
+        assert_eq!(NoteSummary::from(&short).preview, "Short title");
 
         let body = "🦀".repeat(MAX_PREVIEW_CHARS + 1);
-        let note = PileNote::create(body).unwrap();
-        let summary = PileNoteSummary::from(&note);
+        let note = Note::create(body);
+        let summary = NoteSummary::from(&note);
         assert_eq!(summary.preview, format!("{}…", "🦀".repeat(MAX_PREVIEW_CHARS)));
         assert_eq!(summary.preview.chars().count(), MAX_PREVIEW_CHARS + 1);
+    }
+
+    #[test]
+    fn archive_and_unarchive_preserve_data() {
+        let note = Note::create("Some body");
+        let note_clone = note.clone();
+        let archived = note.archive();
+        assert_eq!(archived.id(), note_clone.id());
+        assert_eq!(archived.body(), note_clone.body());
+        assert_eq!(archived.revision(), note_clone.revision());
+        assert_eq!(archived.created_at(), note_clone.created_at());
+        assert_eq!(archived.updated_at(), note_clone.updated_at());
+
+        let unarchived = archived.unarchive();
+        assert_eq!(unarchived.id(), note_clone.id());
+        assert_eq!(unarchived.body(), note_clone.body());
+        assert_eq!(unarchived.revision(), note_clone.revision());
+        assert_eq!(unarchived.created_at(), note_clone.created_at());
+        assert_eq!(unarchived.updated_at(), note_clone.updated_at());
+    }
+
+    #[test]
+    fn recover_revision_overflow_resets_revision() {
+        let note = Note::create("Some body");
+        let mut overflowed_note = note.clone();
+        overflowed_note.revision = u64::MAX;
+        let recovered_note = overflowed_note.recover_revision_overflow();
+        assert_ne!(recovered_note.id(), overflowed_note.id());
+        assert_eq!(recovered_note.revision(), 1);
+        assert_eq!(recovered_note.body(), overflowed_note.body());
+        assert_eq!(recovered_note.created_at(), overflowed_note.created_at());
+        assert!(recovered_note.updated_at() > overflowed_note.updated_at());
     }
 }
