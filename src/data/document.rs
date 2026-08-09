@@ -5,11 +5,11 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio_rusqlite::{Connection, OpenFlags};
 
-use super::version::Version;
+use super::version::SchemaVersion;
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"PUCK");
-const CURRENT_VERSION: Version = Version::new(0, 0, 0);
-const MINIMUM_COMPATIBLE_VERSION: Version = Version::new(0, 0, 0);
+const CURRENT_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 0);
+const MINIMUM_COMPATIBLE_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 0);
 
 #[derive(Debug, Error)]
 pub enum DocumentError {
@@ -23,10 +23,10 @@ pub enum DocumentError {
     IoError(#[from] std::io::Error),
 
     #[error("Version mismatch for file {0}: expected at least {1}, found {2}")]
-    VersionError(PathBuf, Version, Version),
+    VersionError(PathBuf, SchemaVersion, SchemaVersion),
 
     #[error("Unsupported version for file {0}: maximum supported is {1}, found {2}")]
-    UnsupportedVersion(PathBuf, Version, Version),
+    UnsupportedVersion(PathBuf, SchemaVersion, SchemaVersion),
 }
 
 impl From<tokio_rusqlite::rusqlite::Error> for DocumentError {
@@ -45,7 +45,7 @@ impl From<tokio_rusqlite::rusqlite::Error> for DocumentError {
 pub struct Document {
     path: PathBuf,
     conn: Connection,
-    version: Version,
+    version: SchemaVersion,
 }
 
 #[derive(Clone, Copy)]
@@ -56,7 +56,7 @@ enum ConnectMode {
 
 struct DocumentHeader {
     application_id: i32,
-    version: Version,
+    version: SchemaVersion,
 }
 
 impl Document {
@@ -104,7 +104,7 @@ impl Document {
     }
 
     #[must_use]
-    pub fn version(&self) -> Version {
+    pub fn version(&self) -> SchemaVersion {
         self.version
     }
 }
@@ -134,7 +134,7 @@ async fn prepare_connection(
         let user_version =
             conn.pragma_query_value(None, "user_version", |row| row.get::<_, i32>(0))?;
 
-        Ok(DocumentHeader { application_id, version: Version::from_i32(user_version) })
+        Ok(DocumentHeader { application_id, version: SchemaVersion::from_i32(user_version) })
     })
     .await
     .map_err(DocumentError::from)
@@ -199,7 +199,7 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        APPLICATION_ID, CURRENT_VERSION, Document, DocumentError, DocumentHeader, Version,
+        APPLICATION_ID, CURRENT_VERSION, Document, DocumentError, DocumentHeader, SchemaVersion,
         validate_header,
     };
 
@@ -215,9 +215,9 @@ mod tests {
 
     #[test]
     fn future_version_is_rejected_as_unsupported() {
-        let future_version = Version::new(
-            CURRENT_VERSION.release(),
-            CURRENT_VERSION.schema(),
+        let future_version = SchemaVersion::new(
+            CURRENT_VERSION.major(),
+            CURRENT_VERSION.minor(),
             CURRENT_VERSION
                 .migration()
                 .checked_add(1)
@@ -252,7 +252,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(application_id, APPLICATION_ID);
-        assert_eq!(Version::from_i32(user_version), CURRENT_VERSION);
+        assert_eq!(SchemaVersion::from_i32(user_version), CURRENT_VERSION);
         drop(document);
         std::fs::remove_file(path).unwrap();
     }
