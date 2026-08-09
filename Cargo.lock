@@ -3961,6 +3961,7 @@ dependencies = [
  "clap-verbosity-flag",
  "i18n-embed",
  "i18n-embed-fl",
+ "indexmap",
  "libcosmic",
  "open",
  "rust-embed",

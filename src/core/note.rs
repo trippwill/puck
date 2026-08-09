@@ -1,60 +1,34 @@
-#![allow(dead_code, unused_imports)]
-
-use std::fmt;
-
 use thiserror::Error;
 use time::OffsetDateTime;
-use uuid::Uuid;
 
+use crate::core::uuidv7_id;
+
+/// The maximum number of characters in a pile-note preview.
 pub const MAX_PREVIEW_CHARS: usize = 72;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NoteId(Uuid);
+uuidv7_id!(NoteId);
 
-impl NoteId {
-    #[must_use]
-    pub fn new() -> Self {
-        Self(Uuid::now_v7())
-    }
-
-    #[must_use]
-    pub fn from_uuid(value: Uuid) -> Self {
-        Self(value)
-    }
-
-    #[must_use]
-    pub const fn as_uuid(&self) -> Uuid {
-        self.0
-    }
-}
-
-impl Default for NoteId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl fmt::Display for NoteId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
+/// An error creating, restoring, or editing a pile note.
 #[derive(Debug, Error)]
 pub enum NoteError {
+    /// The note body is empty or whitespace.
     #[error("Note body cannot be empty")]
     Empty,
 
+    /// A restored revision is zero.
     #[error("Note revision must be greater than zero")]
     InvalidRevision,
 
+    /// Editing would overflow the revision counter.
     #[error("Note revision counter overflow")]
     RevisionOverflow,
 
+    /// The updated timestamp precedes the creation timestamp.
     #[error("Invalid timestamp")]
     InvalidTimestamp,
 }
 
+/// An immutable revision of a free-form pile note.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PileNote {
     id: NoteId,
@@ -112,26 +86,31 @@ impl PileNote {
         Ok(Self { id: self.id, body, revision, created_at: self.created_at, updated_at })
     }
 
+    /// Returns the note ID.
     #[must_use]
     pub fn id(&self) -> NoteId {
         self.id
     }
 
+    /// Returns the full note body.
     #[must_use]
     pub fn body(&self) -> &str {
         &self.body
     }
 
+    /// Returns the revision number.
     #[must_use]
     pub fn revision(&self) -> u64 {
         self.revision
     }
 
+    /// Returns when the note was created.
     #[must_use]
     pub fn created_at(&self) -> OffsetDateTime {
         self.created_at
     }
 
+    /// Returns when this revision was created.
     #[must_use]
     pub fn updated_at(&self) -> OffsetDateTime {
         self.updated_at
@@ -142,26 +121,25 @@ fn validate_body(body: String) -> Result<String, NoteError> {
     if body.trim().is_empty() { Err(NoteError::Empty) } else { Ok(body) }
 }
 
+/// A compact pile-note projection for lists and search results.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PileNoteSummary {
+    /// The source note ID.
     pub id: NoteId,
+    /// The first line, truncated to [`MAX_PREVIEW_CHARS`] characters.
     pub preview: String,
+    /// The source note revision.
     pub revision: u64,
+    /// The source note's update timestamp.
     pub updated_at: OffsetDateTime,
 }
 
 impl From<&PileNote> for PileNoteSummary {
     fn from(note: &PileNote) -> Self {
-        let mut preview: String = note
-            .body()
-            .lines()
-            .next()
-            .unwrap_or_default()
-            .chars()
-            .take(MAX_PREVIEW_CHARS)
-            .collect();
+        let first_line = note.body().lines().next().unwrap_or_default();
+        let mut preview: String = first_line.chars().take(MAX_PREVIEW_CHARS).collect();
 
-        if note.body().chars().count() > MAX_PREVIEW_CHARS {
+        if first_line.chars().count() > MAX_PREVIEW_CHARS {
             preview.push('…');
         }
 
@@ -209,5 +187,40 @@ mod tests {
         let updated_at = created_at;
         let result = PileNote::restore(NoteId::new(), body, 0, created_at, updated_at);
         assert!(matches!(result, Err(NoteError::InvalidRevision)));
+    }
+
+    #[test]
+    fn restore_validates_timestamps_and_preserves_data() {
+        let id = NoteId::new();
+        let created_at = OffsetDateTime::now_utc();
+        let updated_at = created_at + time::Duration::SECOND;
+
+        assert!(matches!(
+            PileNote::restore(id, String::from("Body"), 2, updated_at, created_at),
+            Err(NoteError::InvalidTimestamp)
+        ));
+
+        let note = PileNote::restore(id, String::from("Body"), 2, created_at, updated_at).unwrap();
+        assert_eq!(note.id(), id);
+        assert_eq!(note.body(), "Body");
+        assert_eq!(note.revision(), 2);
+        assert_eq!(note.created_at(), created_at);
+        assert_eq!(note.updated_at(), updated_at);
+    }
+
+    #[test]
+    fn summary_uses_and_truncates_only_the_first_line() {
+        let short = PileNote::create(
+            "Short title\nThis second line is deliberately much longer than the preview limit and \
+             must not affect truncation",
+        )
+        .unwrap();
+        assert_eq!(PileNoteSummary::from(&short).preview, "Short title");
+
+        let body = "🦀".repeat(MAX_PREVIEW_CHARS + 1);
+        let note = PileNote::create(body).unwrap();
+        let summary = PileNoteSummary::from(&note);
+        assert_eq!(summary.preview, format!("{}…", "🦀".repeat(MAX_PREVIEW_CHARS)));
+        assert_eq!(summary.preview.chars().count(), MAX_PREVIEW_CHARS + 1);
     }
 }

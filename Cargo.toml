@@ -3,7 +3,7 @@ name = "puck"
 version = "0.1.0"
 edition = "2024"
 license = "MPL-2.0"
-description = "Dynamically structured notes"
+description = "Dynamically structured notes from the bottom up."
 repository = "https://github.com/trippwill/puck"
 
 [dependencies]
@@ -14,6 +14,7 @@ i18n-embed = { version = "0.16", features = [
     "desktop-requester",
 ] }
 i18n-embed-fl = "0.10"
+indexmap = "2.14.0"
 open = "5.3.2"
 rust-embed = "8.8.0"
 thiserror = "2.0.19"

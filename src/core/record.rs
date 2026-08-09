@@ -1,411 +1,313 @@
-#![allow(dead_code)]
+use std::collections::HashMap;
 
+use indexmap::IndexSet;
 use thiserror::Error;
-use time::OffsetDateTime;
 
-pub struct RecordDescription {
-    id: uuid::Uuid,
-    name: String,
-    fields: Vec<FieldDescription>,
+use super::field;
+use crate::core::uuidv7_id;
+
+uuidv7_id!(RecordSchemaId);
+uuidv7_id!(RecordId);
+
+/// An error creating a record from a schema.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum RecordError {
+    /// A supplied field is not listed in the schema.
+    #[error("Field not allowed in this record schema: {0:?}")]
+    FieldNotAllowed(field::FieldDescriptionId),
 }
 
-impl RecordDescription {
-    pub fn new(name: impl Into<String>, fields: Vec<FieldDescription>) -> Self {
-        Self { id: uuid::Uuid::now_v7(), name: name.into(), fields }
-    }
+/// A named, ordered set of field descriptions accepted by records.
+pub struct RecordSchema {
+    id: RecordSchemaId,
+    name: String,
+    description: Option<String>,
+    fields: IndexSet<field::FieldDescriptionId>,
+}
 
-    pub(crate) fn restore(
-        id: uuid::Uuid,
+impl RecordSchema {
+    /// Creates a record schema with a new ID.
+    #[must_use]
+    pub fn new(
         name: impl Into<String>,
-        fields: Vec<FieldDescription>,
+        description: Option<String>,
+        fields: IndexSet<field::FieldDescriptionId>,
     ) -> Self {
-        Self { id, name: name.into(), fields }
+        Self { id: RecordSchemaId::new(), name: name.into(), description, fields }
     }
 
-    pub const fn id(&self) -> uuid::Uuid {
+    /// Creates a new record based on this schema.
+    ///
+    /// If multiple values use the same field description, the first value is retained.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any of the provided fields are not allowed in this schema.
+    pub fn record(
+        &self,
+        fields: impl IntoIterator<Item = RecordField>,
+    ) -> Result<Record, RecordError> {
+        let mut values = HashMap::new();
+        for field in fields {
+            let description_id = field.description_id();
+            if !self.fields.contains(&description_id) {
+                return Err(RecordError::FieldNotAllowed(description_id));
+            }
+
+            values.entry(description_id).or_insert(field);
+        }
+
+        Ok(Record::new(self.id, values))
+    }
+
+    /// Returns the schema ID.
+    #[must_use]
+    pub const fn id(&self) -> RecordSchemaId {
         self.id
     }
 
+    /// Returns the schema name.
+    #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    pub fn fields(&self) -> &[FieldDescription] {
-        &self.fields
-    }
-}
-
-struct FieldDescriptionData {
-    id: uuid::Uuid,
-    name: String,
-}
-
-pub struct TextFieldDescription(FieldDescriptionData);
-pub struct NumberFieldDescription(FieldDescriptionData);
-pub struct BooleanFieldDescription(FieldDescriptionData);
-pub struct DateFieldDescription(FieldDescriptionData);
-
-pub enum FieldDescription {
-    Text(TextFieldDescription),
-    Number(NumberFieldDescription),
-    Boolean(BooleanFieldDescription),
-    Date(DateFieldDescription),
-}
-
-struct FieldValueData<V> {
-    id: uuid::Uuid,
-    description_id: uuid::Uuid,
-    value: V,
-}
-
-pub struct TextFieldValue(FieldValueData<String>);
-pub struct NumberFieldValue(FieldValueData<f64>);
-pub struct BooleanFieldValue(FieldValueData<bool>);
-pub struct DateFieldValue(FieldValueData<OffsetDateTime>);
-
-pub enum FieldValue {
-    Text(TextFieldValue),
-    Number(NumberFieldValue),
-    Boolean(BooleanFieldValue),
-    Date(DateFieldValue),
-}
-
-impl FieldValue {
-    pub const fn id(&self) -> uuid::Uuid {
-        match self {
-            FieldValue::Text(value) => value.id(),
-            FieldValue::Number(value) => value.id(),
-            FieldValue::Boolean(value) => value.id(),
-            FieldValue::Date(value) => value.id(),
-        }
+    /// Returns the optional schema description.
+    #[must_use]
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
     }
 
-    pub const fn description_id(&self) -> uuid::Uuid {
-        match self {
-            FieldValue::Text(value) => value.description_id(),
-            FieldValue::Number(value) => value.description_id(),
-            FieldValue::Boolean(value) => value.description_id(),
-            FieldValue::Date(value) => value.description_id(),
-        }
+    /// Iterates over allowed field descriptions in insertion order.
+    pub fn fields(&self) -> impl Iterator<Item = &field::FieldDescriptionId> {
+        self.fields.iter()
     }
 
-    fn matches(&self, description: &FieldDescription) -> bool {
-        matches!(
-            (self, description),
-            (Self::Text(_), FieldDescription::Text(_))
-                | (Self::Number(_), FieldDescription::Number(_))
-                | (Self::Boolean(_), FieldDescription::Boolean(_))
-                | (Self::Date(_), FieldDescription::Date(_))
-        )
-    }
-}
-
-impl TextFieldValue {
-    pub const fn id(&self) -> uuid::Uuid {
-        self.0.id
-    }
-
-    pub const fn description_id(&self) -> uuid::Uuid {
-        self.0.description_id
-    }
-
-    pub fn value(&self) -> &str {
-        &self.0.value
-    }
-
+    #[allow(dead_code)]
     pub(crate) fn restore(
-        id: uuid::Uuid,
-        description_id: uuid::Uuid,
-        value: impl Into<String>,
+        id: RecordSchemaId,
+        name: String,
+        description: Option<String>,
+        fields: IndexSet<field::FieldDescriptionId>,
     ) -> Self {
-        Self(FieldValueData { id, description_id, value: value.into() })
+        Self { id, name, description, fields }
     }
 }
 
-impl From<TextFieldValue> for FieldValue {
-    fn from(value: TextFieldValue) -> Self {
-        FieldValue::Text(value)
-    }
+/// A field value stored in a record.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RecordField {
+    /// A text value.
+    Text(field::TextField),
+    /// A Boolean value.
+    Boolean(field::BooleanField),
+    /// An integer value.
+    Integer(field::IntegerField),
+    /// A calendar-date value.
+    Date(field::DateField),
+    /// A wall-clock-time value.
+    Time(field::TimeField),
 }
 
-impl NumberFieldValue {
-    pub const fn id(&self) -> uuid::Uuid {
-        self.0.id
-    }
-
-    pub const fn description_id(&self) -> uuid::Uuid {
-        self.0.description_id
-    }
-
-    pub fn value(&self) -> f64 {
-        self.0.value
-    }
-
-    pub(crate) fn restore(id: uuid::Uuid, description_id: uuid::Uuid, value: f64) -> Self {
-        Self(FieldValueData { id, description_id, value })
-    }
-}
-
-impl From<NumberFieldValue> for FieldValue {
-    fn from(value: NumberFieldValue) -> Self {
-        FieldValue::Number(value)
-    }
-}
-
-impl BooleanFieldValue {
-    pub const fn id(&self) -> uuid::Uuid {
-        self.0.id
-    }
-
-    pub const fn description_id(&self) -> uuid::Uuid {
-        self.0.description_id
-    }
-
-    pub fn value(&self) -> bool {
-        self.0.value
-    }
-
-    pub(crate) fn restore(id: uuid::Uuid, description_id: uuid::Uuid, value: bool) -> Self {
-        Self(FieldValueData { id, description_id, value })
-    }
-}
-
-impl From<BooleanFieldValue> for FieldValue {
-    fn from(value: BooleanFieldValue) -> Self {
-        FieldValue::Boolean(value)
-    }
-}
-
-impl DateFieldValue {
-    pub const fn id(&self) -> uuid::Uuid {
-        self.0.id
-    }
-
-    pub const fn description_id(&self) -> uuid::Uuid {
-        self.0.description_id
-    }
-
-    pub fn value(&self) -> OffsetDateTime {
-        self.0.value
-    }
-
-    pub(crate) fn restore(
-        id: uuid::Uuid,
-        description_id: uuid::Uuid,
-        value: OffsetDateTime,
-    ) -> Self {
-        Self(FieldValueData { id, description_id, value })
-    }
-}
-
-impl From<DateFieldValue> for FieldValue {
-    fn from(value: DateFieldValue) -> Self {
-        FieldValue::Date(value)
-    }
-}
-
-impl FieldDescription {
-    pub fn id(&self) -> uuid::Uuid {
+impl RecordField {
+    /// Returns the field-value ID.
+    #[must_use]
+    pub fn id(&self) -> field::FieldId {
         match self {
-            FieldDescription::Text(desc) => desc.id(),
-            FieldDescription::Number(desc) => desc.id(),
-            FieldDescription::Boolean(desc) => desc.id(),
-            FieldDescription::Date(desc) => desc.id(),
+            RecordField::Text(field) => field.id(),
+            RecordField::Boolean(field) => field.id(),
+            RecordField::Integer(field) => field.id(),
+            RecordField::Date(field) => field.id(),
+            RecordField::Time(field) => field.id(),
         }
     }
 
-    pub fn name(&self) -> &str {
+    /// Returns the field-description ID.
+    #[must_use]
+    pub fn description_id(&self) -> field::FieldDescriptionId {
         match self {
-            FieldDescription::Text(desc) => desc.name(),
-            FieldDescription::Number(desc) => desc.name(),
-            FieldDescription::Boolean(desc) => desc.name(),
-            FieldDescription::Date(desc) => desc.name(),
+            RecordField::Text(field) => field.description_id(),
+            RecordField::Boolean(field) => field.description_id(),
+            RecordField::Integer(field) => field.description_id(),
+            RecordField::Date(field) => field.description_id(),
+            RecordField::Time(field) => field.description_id(),
+        }
+    }
+
+    /// Formats the contained value for display.
+    #[must_use]
+    pub fn value_as_string(&self) -> String {
+        match self {
+            RecordField::Text(field) => field.value().clone(),
+            RecordField::Boolean(field) => field.value().to_string(),
+            RecordField::Integer(field) => field.value().to_string(),
+            RecordField::Date(field) => field.value().to_string(),
+            RecordField::Time(field) => field.value().to_string(),
         }
     }
 }
 
-impl TextFieldDescription {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self(FieldDescriptionData { id: uuid::Uuid::now_v7(), name: name.into() })
-    }
-
-    pub(crate) fn restore(id: uuid::Uuid, name: impl Into<String>) -> Self {
-        Self(FieldDescriptionData { id, name: name.into() })
-    }
-
-    pub const fn id(&self) -> uuid::Uuid {
-        self.0.id
-    }
-
-    pub fn name(&self) -> &str {
-        &self.0.name
-    }
-
-    pub fn value(&self, value: impl Into<String>) -> FieldValue {
-        TextFieldValue(FieldValueData {
-            id: uuid::Uuid::now_v7(),
-            description_id: self.id(),
-            value: value.into(),
-        })
-        .into()
-    }
-}
-
-impl From<TextFieldDescription> for FieldDescription {
-    fn from(desc: TextFieldDescription) -> Self {
-        FieldDescription::Text(desc)
-    }
-}
-
-impl NumberFieldDescription {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self(FieldDescriptionData { id: uuid::Uuid::now_v7(), name: name.into() })
-    }
-
-    pub(crate) fn restore(id: uuid::Uuid, name: impl Into<String>) -> Self {
-        Self(FieldDescriptionData { id, name: name.into() })
-    }
-
-    pub const fn id(&self) -> uuid::Uuid {
-        self.0.id
-    }
-
-    pub fn name(&self) -> &str {
-        &self.0.name
-    }
-
-    pub fn value(&self, value: f64) -> FieldValue {
-        NumberFieldValue(FieldValueData {
-            id: uuid::Uuid::now_v7(),
-            description_id: self.id(),
-            value,
-        })
-        .into()
-    }
-}
-
-impl From<NumberFieldDescription> for FieldDescription {
-    fn from(desc: NumberFieldDescription) -> Self {
-        FieldDescription::Number(desc)
-    }
-}
-
-impl BooleanFieldDescription {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self(FieldDescriptionData { id: uuid::Uuid::now_v7(), name: name.into() })
-    }
-
-    pub(crate) fn restore(id: uuid::Uuid, name: impl Into<String>) -> Self {
-        Self(FieldDescriptionData { id, name: name.into() })
-    }
-
-    pub const fn id(&self) -> uuid::Uuid {
-        self.0.id
-    }
-
-    pub fn name(&self) -> &str {
-        &self.0.name
-    }
-
-    pub fn value(&self, value: bool) -> FieldValue {
-        BooleanFieldValue(FieldValueData {
-            id: uuid::Uuid::now_v7(),
-            description_id: self.id(),
-            value,
-        })
-        .into()
-    }
-}
-
-impl From<BooleanFieldDescription> for FieldDescription {
-    fn from(desc: BooleanFieldDescription) -> Self {
-        FieldDescription::Boolean(desc)
-    }
-}
-
-impl DateFieldDescription {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self(FieldDescriptionData { id: uuid::Uuid::now_v7(), name: name.into() })
-    }
-
-    pub(crate) fn restore(id: uuid::Uuid, name: impl Into<String>) -> Self {
-        Self(FieldDescriptionData { id, name: name.into() })
-    }
-
-    pub const fn id(&self) -> uuid::Uuid {
-        self.0.id
-    }
-
-    pub fn name(&self) -> &str {
-        &self.0.name
-    }
-
-    pub fn value(&self, value: OffsetDateTime) -> FieldValue {
-        DateFieldValue(FieldValueData {
-            id: uuid::Uuid::now_v7(),
-            description_id: self.id(),
-            value,
-        })
-        .into()
-    }
-}
-
-impl From<DateFieldDescription> for FieldDescription {
-    fn from(desc: DateFieldDescription) -> Self {
-        FieldDescription::Date(desc)
-    }
-}
-
-#[derive(Debug, Error)]
-pub enum RecordError {
-    #[error("Unknown field with ID: {0}")]
-    UnknownField(uuid::Uuid),
-    #[error("Field type mismatch for field with ID: {0}")]
-    FieldTypeMismatch(uuid::Uuid),
-}
-
+/// A set of typed field values created from a [`RecordSchema`].
 pub struct Record {
-    id: uuid::Uuid,
-    description_id: uuid::Uuid,
-    values: Vec<FieldValue>,
+    id: RecordId,
+    schema_id: RecordSchemaId,
+    fields: HashMap<field::FieldDescriptionId, RecordField>,
 }
 
 impl Record {
-    pub fn new(
-        description: &RecordDescription,
-        values: Vec<FieldValue>,
-    ) -> Result<Self, RecordError> {
-        for value in &values {
-            let Some(field) =
-                description.fields().iter().find(|field| field.id() == value.description_id())
-            else {
-                return Err(RecordError::UnknownField(value.description_id()));
-            };
-
-            if !value.matches(field) {
-                return Err(RecordError::FieldTypeMismatch(value.description_id()));
-            }
-        }
-        Ok(Self { id: uuid::Uuid::now_v7(), description_id: description.id(), values })
-    }
-
-    pub(crate) fn restore(
-        id: uuid::Uuid,
-        description_id: uuid::Uuid,
-        values: Vec<FieldValue>,
+    /// Returns the record ID.
+    #[must_use]
+    fn new(
+        schema_id: RecordSchemaId,
+        fields: HashMap<field::FieldDescriptionId, RecordField>,
     ) -> Self {
-        Self { id, description_id, values }
+        Self { id: RecordId::new(), schema_id, fields }
     }
 
-    pub const fn id(&self) -> uuid::Uuid {
+    /// Returns the schema used to create this record.
+    #[must_use]
+    pub const fn id(&self) -> RecordId {
         self.id
     }
 
-    pub const fn description_id(&self) -> uuid::Uuid {
-        self.description_id
+    /// Finds a field by its description.
+    #[must_use]
+    pub const fn schema_id(&self) -> RecordSchemaId {
+        self.schema_id
     }
 
-    pub fn values(&self) -> &[FieldValue] {
-        &self.values
+    /// Finds a field by its value ID.
+    #[must_use]
+    pub fn field_by_description(
+        &self,
+        field_description_id: field::FieldDescriptionId,
+    ) -> Option<&RecordField> {
+        self.fields.get(&field_description_id)
+    }
+
+    #[must_use]
+    pub fn field_by_id(&self, field_id: field::FieldId) -> Option<&RecordField> {
+        self.fields.values().find(|field| field.id() == field_id)
+    }
+
+    /// Iterates over the record's fields in unspecified order.
+    pub fn fields(&self) -> impl Iterator<Item = &RecordField> {
+        self.fields.values()
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn restore(
+        id: RecordId,
+        schema_id: RecordSchemaId,
+        fields: HashMap<field::FieldDescriptionId, RecordField>,
+    ) -> Self {
+        Self { id, schema_id, fields }
+    }
+}
+
+impl From<field::TextField> for RecordField {
+    fn from(field: field::TextField) -> Self {
+        RecordField::Text(field)
+    }
+}
+impl From<field::BooleanField> for RecordField {
+    fn from(field: field::BooleanField) -> Self {
+        RecordField::Boolean(field)
+    }
+}
+impl From<field::IntegerField> for RecordField {
+    fn from(field: field::IntegerField) -> Self {
+        RecordField::Integer(field)
+    }
+}
+impl From<field::DateField> for RecordField {
+    fn from(field: field::DateField) -> Self {
+        RecordField::Date(field)
+    }
+}
+impl From<field::TimeField> for RecordField {
+    fn from(field: field::TimeField) -> Self {
+        RecordField::Time(field)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use indexmap::indexset;
+
+    use super::*;
+
+    #[test]
+    fn schema_and_record_preserve_domain_data() {
+        let greeting = field::TextFieldDescription::new("Greeting");
+        let active = field::BooleanFieldDescription::new("Active");
+        let schema = RecordSchema::new(
+            "User",
+            Some(String::from("A user record")),
+            indexset! {greeting.id(), active.id()},
+        );
+        assert_eq!(schema.name(), "User");
+        assert_eq!(schema.description(), Some("A user record"));
+        assert_eq!(schema.fields().copied().collect::<Vec<_>>(), [greeting.id(), active.id()]);
+
+        let greeting_value = greeting.value(String::from("Hello"));
+        let greeting_value_id = greeting_value.id();
+        let active_value = active.value(true);
+        let active_value_id = active_value.id();
+        let record = schema.record([greeting_value.into(), active_value.into()]).unwrap();
+
+        assert_eq!(record.schema_id(), schema.id());
+        assert_eq!(
+            record.field_by_description(greeting.id()).map(RecordField::id),
+            Some(greeting_value_id)
+        );
+        assert_eq!(
+            record.field_by_id(active_value_id).map(RecordField::description_id),
+            Some(active.id())
+        );
+        assert_eq!(
+            record.fields().map(RecordField::description_id).collect::<HashSet<_>>(),
+            HashSet::from([greeting.id(), active.id()])
+        );
+    }
+
+    #[test]
+    fn schema_description_can_be_omitted() {
+        let schema = RecordSchema::new("User", None, indexset! {});
+
+        assert_eq!(schema.description(), None);
+    }
+
+    #[test]
+    fn record_rejects_fields_outside_schema() {
+        let allowed = field::TextFieldDescription::new("Allowed");
+        let unknown = field::TextFieldDescription::new("Unknown");
+        let schema = RecordSchema::new("Schema", None, indexset! {allowed.id()});
+
+        assert_eq!(
+            schema.record([unknown.value(String::from("value")).into()]).err(),
+            Some(RecordError::FieldNotAllowed(unknown.id()))
+        );
+    }
+
+    #[test]
+    fn duplicate_fields_keep_the_first_value() {
+        let greeting = field::TextFieldDescription::new("Greeting");
+        let schema = RecordSchema::new("Schema", None, indexset! {greeting.id()});
+
+        let record = schema
+            .record([
+                greeting.value(String::from("First")).into(),
+                greeting.value(String::from("Second")).into(),
+            ])
+            .unwrap();
+
+        let Some(RecordField::Text(value)) = record.field_by_description(greeting.id()) else {
+            panic!("greeting should be a text field");
+        };
+        assert_eq!(value.value(), "First");
+        assert_eq!(record.fields().count(), 1);
     }
 }

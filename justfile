@@ -49,10 +49,7 @@ build-debug *args:
 build-release *args:
   CARGO_PROFILE_RELEASE_LTO=off RUSTFLAGS="-C link-arg=-fuse-ld=mold" cargo build --locked --release {{args}}
 
-[windows]
-build-release *args: (build-debug '--release' args)
-
-[macos]
+[windows, macos]
 build-release *args: (build-debug '--release' args)
 
 # Compiles release profile with vendored dependencies
@@ -67,6 +64,15 @@ check-json: (check '--message-format=json')
 
 fmt *args:
     cargo +nightly fmt --all {{args}}
+
+
+[linux]
+test *args:
+  CARGO_PROFILE_RELEASE_LTO=off RUSTFLAGS="-C link-arg=-fuse-ld=mold" cargo test --release --locked {{args}}
+
+[windows, macos]
+test *args:
+  cargo test --release --locked {{args}}
 
 # Run the application for testing purposes
 run *args:
