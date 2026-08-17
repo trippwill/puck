@@ -198,10 +198,7 @@ impl Drop for Document {
 mod tests {
     use std::path::Path;
 
-    use super::{
-        APPLICATION_ID, CURRENT_VERSION, Document, DocumentError, DocumentHeader, SchemaVersion,
-        validate_header,
-    };
+    use super::*;
 
     #[test]
     fn invalid_application_id_is_rejected() {

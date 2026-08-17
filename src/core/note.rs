@@ -1,6 +1,10 @@
 use thiserror::Error;
 use time::OffsetDateTime;
 
+pub mod prelude {
+    pub use super::{ArchiveNote, Note, NoteError, NoteId, NoteState, NoteSummary, Pile, PileNote};
+}
+
 use crate::core::uuidv7_id;
 
 /// The maximum number of characters in a pile-note preview.
@@ -25,7 +29,7 @@ pub enum NoteError {
 }
 
 mod sealed {
-    pub trait NoteState: Clone + PartialEq + Eq {}
+    pub trait Sealed {}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,8 +37,12 @@ pub struct Pile;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Archive;
 
-impl sealed::NoteState for Pile {}
-impl sealed::NoteState for Archive {}
+pub trait NoteState: self::sealed::Sealed + Clone + PartialEq + Eq {}
+
+impl NoteState for Pile {}
+impl NoteState for Archive {}
+impl self::sealed::Sealed for Pile {}
+impl self::sealed::Sealed for Archive {}
 
 /// An immutable revision of a free-form note in the pile.
 pub type PileNote = Note<Pile>;
@@ -43,7 +51,7 @@ pub type ArchiveNote = Note<Archive>;
 
 /// An immutable revision of a free-form note.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Note<T: sealed::NoteState> {
+pub struct Note<T: NoteState> {
     id: NoteId,
     body: String,
     revision: u64,
@@ -54,6 +62,7 @@ pub struct Note<T: sealed::NoteState> {
 
 impl Note<Pile> {
     /// Creates a new note with the given body.
+    #[must_use]
     pub fn create(body: impl Into<String>) -> Self {
         let now = OffsetDateTime::now_utc();
         Self {
@@ -85,6 +94,7 @@ impl Note<Pile> {
         })
     }
 
+    #[must_use]
     pub fn recover_revision_overflow(&self) -> Self {
         let updated_at = OffsetDateTime::now_utc();
         Self {
@@ -97,6 +107,7 @@ impl Note<Pile> {
         }
     }
 
+    #[must_use]
     pub fn archive(self) -> Note<Archive> {
         Note {
             id: self.id,
@@ -110,6 +121,7 @@ impl Note<Pile> {
 }
 
 impl Note<Archive> {
+    #[must_use]
     pub fn unarchive(self) -> Note<Pile> {
         Note {
             id: self.id,
@@ -122,14 +134,15 @@ impl Note<Archive> {
     }
 }
 
-impl<T: sealed::NoteState> Note<T> {
+impl<T: NoteState> Note<T> {
     /// Restores a note from persisted data.
     ///
     /// # Errors
     ///
     /// Returns an error if the revision is zero, or the timestamps are invalid
     /// (e.g., `updated_at` is before `created_at`).
-    pub fn restore(
+    #[allow(dead_code)]
+    pub(crate) fn restore(
         id: NoteId,
         body: String,
         revision: u64,
@@ -196,7 +209,7 @@ pub struct NoteSummary {
     pub updated_at: OffsetDateTime,
 }
 
-impl<T: sealed::NoteState> From<&Note<T>> for NoteSummary {
+impl<T: NoteState> From<&Note<T>> for NoteSummary {
     fn from(note: &Note<T>) -> Self {
         let first_line = note.body().lines().next().unwrap_or_default();
         let mut preview: String = first_line.chars().take(MAX_PREVIEW_CHARS).collect();

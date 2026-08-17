@@ -8,18 +8,34 @@ API Compatibility is NOT a concern until there has been a release.
 - Build debug: `just build-debug`
 - Run the app: `just run`
 - Run the cli: `just run --bin puckctl`
-- Lint: `just check` (`cargo clippy --all-features --locked -- -W clippy::pedantic`)
-- Full tests: `cargo test --locked`
-- Single test: `cargo test --locked --lib core::note::pile_note::tests::empty_body_should_return_error`
+- Format: `just fmt`
+- Check formatting: `just fmt -- --check`
+- Lint: `just check`
+- Full tests: `just test`
+- Single test: `just test -- core::note::tests::empty_body_should_return_error`
 - Packaging/vendor flow: `just vendor`, then `just build-vendored`
 
-`just` recipes pass extra Cargo args through `*args`, so prefer them over duplicating build flags. The Linux release/run recipes intentionally disable release LTO and use mold.
+Always use the `just fmt`, `just test`, and `just check` targets instead of invoking `cargo fmt`,
+`cargo test`, or `cargo clippy` directly. The recipes pass extra Cargo arguments through `*args` and
+define the required toolchain, profile, features, and platform flags.
 
 ## Architecture
 
 - `src/main.rs` is the GUI entry point: it selects desktop languages, initializes `puck::i18n`, configures COSMIC window limits, then runs `puck::app::AppModel`.
 - `src/app.rs` is still COSMIC template/demo code, not product logic. It demonstrates the app shell (`AppModel`, messages, nav, subscriptions, context drawer), but product behavior currently lives in `src/core/` and `src/bin/puckctl.rs`.
-- `src/core/note/` is the domain layer. `PileNote` validates non-empty bodies, owns revision/timestamps, and creates summaries; `NoteId` wraps UUID v7 IDs.
+- `src/core/` contains owned domain values and query projections. The GUI is not data-bound: it owns
+  materialized values, changes them through messages in `update`, and handles query and command
+  results explicitly.
+- The exact `Document` persistence API is intentionally undecided until it is implemented. Do not
+  assume aggregates, modeled command payloads, raw ID/value payloads, repository traits, event
+  sourcing, or caching without a concrete need.
+- Domain IDs are small, opaque values used by GUI messages and `Document` lookups. Keep their storage
+  representation private.
+- There is no domain record schema or allowed-field set. A collection's available fields are derived
+  from the field definitions used by its records. `SchemaVersion` refers only to the SQLite storage
+  format.
+- Collections, records, and field definitions have domain identity. Field values do not: a value is
+  identified by its `(RecordId, FieldDefId)` relationship and is replaced in place.
 - `src/bin/puckctl.rs` is a separate CLI binary using clap/tracing. It currently only parses `document new <file>` and logs the intended action.
 - Localization is embedded from `i18n/` with `rust-embed` and `i18n-embed`; UI strings should use the exported `fl!` macro and entries in `i18n/en/puck.ftl`.
 - `resources/` plus `justfile` handle Linux desktop/appstream/icon installation. Keep packaging app IDs and `AppModel::APP_ID` aligned when changing identity/config behavior.
