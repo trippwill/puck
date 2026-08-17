@@ -20,7 +20,10 @@ impl Record {
     #[must_use]
     #[allow(clippy::new_without_default)]
     pub(crate) fn new(collection: &Collection) -> Self {
-        Self { collection_id: collection.id(), id: RecordId::new() }
+        Self {
+            collection_id: collection.id(),
+            id: RecordId::new(),
+        }
     }
 
     /// Returns the record ID.

@@ -11,7 +11,11 @@ pub struct SchemaVersion {
 impl SchemaVersion {
     #[must_use]
     pub const fn new(major: u8, minor: u8, migration: u16) -> Self {
-        Self { major, minor, migration }
+        Self {
+            major,
+            minor,
+            migration,
+        }
     }
 
     #[must_use]
@@ -20,7 +24,11 @@ impl SchemaVersion {
         let major = ((raw >> 24) & 0xFF) as u8;
         let minor = ((raw >> 16) & 0xFF) as u8;
         let migration = (raw & 0xFFFF) as u16;
-        Self { major, minor, migration }
+        Self {
+            major,
+            minor,
+            migration,
+        }
     }
 
     #[must_use]
@@ -74,10 +82,12 @@ impl FromStr for SchemaVersion {
             return Err(format!("Invalid version string: {s}"));
         }
 
-        let major =
-            parts[0].parse::<u8>().map_err(|_| format!("Invalid major version: {}", parts[0]))?;
-        let minor =
-            parts[1].parse::<u8>().map_err(|_| format!("Invalid minor version: {}", parts[1]))?;
+        let major = parts[0]
+            .parse::<u8>()
+            .map_err(|_| format!("Invalid major version: {}", parts[0]))?;
+        let minor = parts[1]
+            .parse::<u8>()
+            .map_err(|_| format!("Invalid minor version: {}", parts[1]))?;
         let migration = parts[2]
             .parse::<u16>()
             .map_err(|_| format!("Invalid migration version: {}", parts[2]))?;
@@ -201,7 +211,10 @@ mod tests {
             "1.256.3",
             "1.2.65536",
         ] {
-            assert!(input.parse::<SchemaVersion>().is_err(), "{input} should be rejected");
+            assert!(
+                input.parse::<SchemaVersion>().is_err(),
+                "{input} should be rejected"
+            );
         }
     }
 

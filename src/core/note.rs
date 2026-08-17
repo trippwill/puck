@@ -82,7 +82,10 @@ impl Note<Pile> {
     /// Returns an error if the revision counter overflows.
     /// See [`PileNote::recover_revision_overflow`] for a way to recover from this error.
     pub fn edit(&self, body: impl Into<String>) -> Result<Self, NoteError> {
-        let revision = self.revision.checked_add(1).ok_or(NoteError::RevisionOverflow)?;
+        let revision = self
+            .revision
+            .checked_add(1)
+            .ok_or(NoteError::RevisionOverflow)?;
         let updated_at = OffsetDateTime::now_utc();
         Ok(Self {
             id: self.id,
@@ -218,7 +221,12 @@ impl<T: NoteState> From<&Note<T>> for NoteSummary {
             preview.push('…');
         }
 
-        Self { id: note.id(), preview, revision: note.revision(), updated_at: note.updated_at() }
+        Self {
+            id: note.id(),
+            preview,
+            revision: note.revision(),
+            updated_at: note.updated_at(),
+        }
     }
 }
 
@@ -286,7 +294,10 @@ mod tests {
         let body = "🦀".repeat(MAX_PREVIEW_CHARS + 1);
         let note = Note::create(body);
         let summary = NoteSummary::from(&note);
-        assert_eq!(summary.preview, format!("{}…", "🦀".repeat(MAX_PREVIEW_CHARS)));
+        assert_eq!(
+            summary.preview,
+            format!("{}…", "🦀".repeat(MAX_PREVIEW_CHARS))
+        );
         assert_eq!(summary.preview.chars().count(), MAX_PREVIEW_CHARS + 1);
     }
 

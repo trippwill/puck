@@ -17,7 +17,10 @@ impl Collection {
     /// Creates an empty collection with a new ID.
     #[must_use]
     pub fn new(name: &str) -> Self {
-        Self { id: CollectionId::new(), name: name.into() }
+        Self {
+            id: CollectionId::new(),
+            name: name.into(),
+        }
     }
 
     /// Returns the collection ID.
@@ -46,7 +49,10 @@ impl Collection {
     /// Creates a collection from the given ID and name.
     #[must_use]
     pub(crate) fn restore(id: CollectionId, name: &str) -> Self {
-        Self { id, name: name.into() }
+        Self {
+            id,
+            name: name.into(),
+        }
     }
 }
 

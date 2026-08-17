@@ -68,7 +68,10 @@ impl Document {
     pub async fn create(path: impl AsRef<Path>) -> Result<Self, DocumentError> {
         let path = path.as_ref().to_path_buf();
 
-        let file = OpenOptions::new().write(true).create_new(true).open(&path)?;
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
 
         // SQLite will open the file and write its header. We needed this
         // to reserve the filename atomically.
@@ -134,7 +137,10 @@ async fn prepare_connection(
         let user_version =
             conn.pragma_query_value(None, "user_version", |row| row.get::<_, i32>(0))?;
 
-        Ok(DocumentHeader { application_id, version: SchemaVersion::from_i32(user_version) })
+        Ok(DocumentHeader {
+            application_id,
+            version: SchemaVersion::from_i32(user_version),
+        })
     })
     .await
     .map_err(DocumentError::from)
@@ -161,7 +167,11 @@ async fn connect(path: impl AsRef<Path>, kind: ConnectMode) -> Result<Document, 
         return Err(error);
     }
 
-    Ok(Document { path, conn, version: header.version })
+    Ok(Document {
+        path,
+        conn,
+        version: header.version,
+    })
 }
 
 fn validate_header(path: &Path, header: &DocumentHeader) -> Result<(), DocumentError> {
@@ -202,7 +212,10 @@ mod tests {
 
     #[test]
     fn invalid_application_id_is_rejected() {
-        let header = DocumentHeader { application_id: 0, version: CURRENT_VERSION };
+        let header = DocumentHeader {
+            application_id: 0,
+            version: CURRENT_VERSION,
+        };
 
         assert!(matches!(
             validate_header(Path::new("invalid.puck"), &header),
@@ -220,7 +233,10 @@ mod tests {
                 .checked_add(1)
                 .expect("test requires a future migration version"),
         );
-        let header = DocumentHeader { application_id: APPLICATION_ID, version: future_version };
+        let header = DocumentHeader {
+            application_id: APPLICATION_ID,
+            version: future_version,
+        };
 
         assert!(matches!(
             validate_header(Path::new("future.puck"), &header),

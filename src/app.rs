@@ -182,8 +182,12 @@ impl cosmic::Application for AppModel {
                 let counter_label = ["Watch: ", self.time.to_string().as_str()].concat();
                 let section = cosmic::widget::settings::section().add(
                     cosmic::widget::settings::item::builder(counter_label).control(
-                        widget::button::text(if self.watch_is_active { "Stop" } else { "Start" })
-                            .on_press(Message::ToggleWatch),
+                        widget::button::text(if self.watch_is_active {
+                            "Stop"
+                        } else {
+                            "Start"
+                        })
+                        .on_press(Message::ToggleWatch),
                     ),
                 );
 
@@ -244,13 +248,15 @@ impl cosmic::Application for AppModel {
         // Add subscriptions which are always active.
         let mut subscriptions = vec![
             // Watch for application configuration changes.
-            self.core().watch_config::<Config>(Self::APP_ID).map(|update| {
-                // for why in update.errors {
-                //     tracing::error!(?why, "app config error");
-                // }
+            self.core()
+                .watch_config::<Config>(Self::APP_ID)
+                .map(|update| {
+                    // for why in update.errors {
+                    //     tracing::error!(?why, "app config error");
+                    // }
 
-                Message::UpdateConfig(update.config)
-            }),
+                    Message::UpdateConfig(update.config)
+                }),
         ];
 
         // Conditionally enables a timer that emits a message every second.

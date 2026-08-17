@@ -38,7 +38,9 @@ enum DocumentCommands {
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = Cli::parse();
-    tracing_subscriber::fmt().with_max_level(args.verbosity).init();
+    tracing_subscriber::fmt()
+        .with_max_level(args.verbosity)
+        .init();
 
     match args.command {
         Commands::Document(document_args) => match document_args.command {

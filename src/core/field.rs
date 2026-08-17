@@ -24,7 +24,11 @@ pub trait FieldType: self::sealed::Sealed + Sized + Clone {
     /// Creates a typed field definition with a new ID.
     #[must_use]
     fn def(name: &str) -> FieldDef<Self> {
-        FieldDef { id: FieldDefId::new(), name: name.into(), _marker: PhantomData }
+        FieldDef {
+            id: FieldDefId::new(),
+            name: name.into(),
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -57,7 +61,11 @@ pub struct Field<T: FieldType> {
 
 impl<T: FieldType> Field<T> {
     pub(crate) fn new(def: &FieldDef<T>, record: &Record, value: T::Value) -> Self {
-        Self { def_id: def.id(), record_id: record.id(), value }
+        Self {
+            def_id: def.id(),
+            record_id: record.id(),
+            value,
+        }
     }
 
     /// Returns the field's definition ID.
@@ -79,7 +87,11 @@ impl<T: FieldType> Field<T> {
     /// It is the caller's responsibility to ensure the [`FieldDefId`] is valid for the given value.
     #[must_use]
     pub(crate) fn restore(def_id: FieldDefId, record_id: RecordId, value: T::Value) -> Self {
-        Self { def_id, record_id, value }
+        Self {
+            def_id,
+            record_id,
+            value,
+        }
     }
 }
 
@@ -111,7 +123,11 @@ impl<T: FieldType> FieldDef<T> {
 
     #[must_use]
     pub(crate) fn restore(id: FieldDefId, name: &str) -> Self {
-        Self { id, name: name.into(), _marker: PhantomData }
+        Self {
+            id,
+            name: name.into(),
+            _marker: PhantomData,
+        }
     }
 }
 
