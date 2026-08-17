@@ -271,8 +271,11 @@ async fn prepare_connection(
         conn.execute_batch(
             r"
             PRAGMA foreign_keys = ON;
+            PRAGMA locking_mode = EXCLUSIVE;
             PRAGMA journal_mode = DELETE;
             PRAGMA synchronous = FULL;
+            BEGIN EXCLUSIVE;
+            COMMIT;
             ",
         )?;
 
@@ -505,6 +508,18 @@ mod tests {
         assert_eq!(row.5, 0);
 
         drop(document);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn open_document_has_exclusive_access() {
+        let path = std::env::temp_dir().join(format!("puck-{}.db", uuid::Uuid::now_v7()));
+        let document = Document::create(&path).await.unwrap();
+
+        assert!(Document::open(&path).await.is_err());
+
+        drop(document);
+        Document::open(&path).await.unwrap();
         std::fs::remove_file(path).unwrap();
     }
 

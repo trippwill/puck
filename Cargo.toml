@@ -5,6 +5,7 @@ edition = "2024"
 license = "MPL-2.0"
 description = "Dynamically structured notes from the bottom up."
 repository = "https://github.com/trippwill/puck"
+default-run = "puck"
 
 [dependencies]
 clap = { version = "4.6.5", features = ["derive"] }

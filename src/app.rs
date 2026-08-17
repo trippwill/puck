@@ -1,66 +1,61 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use std::collections::HashMap;
-use std::time::Duration;
 
 use cosmic::app::context_drawer;
-use cosmic::cosmic_config::{self, CosmicConfigEntry};
-use cosmic::iced::alignment::{Horizontal, Vertical};
-use cosmic::iced::{Alignment, Length, Subscription, futures};
+use cosmic::dialog::file_chooser::{self, FileFilter};
+use cosmic::iced::widget::text_editor;
+use cosmic::iced::{Alignment, Length};
 use cosmic::prelude::*;
 use cosmic::widget::about::About;
-use cosmic::widget::{self, icon, menu, nav_bar};
-use futures::SinkExt;
+use cosmic::widget::{self, menu};
 
-use crate::config::Config;
+use crate::core::{NoteId, NoteSummary, PileNote};
+use crate::data::Document;
 use crate::fl;
 
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const APP_ICON: &[u8] = include_bytes!("../resources/icons/hicolor/scalable/apps/icon.svg");
 
-/// The application model stores app-specific state used to describe its interface and
-/// drive its logic.
+/// The application model for an open Puck document.
 pub struct AppModel {
-    /// Application state which is managed by the COSMIC runtime.
     core: cosmic::Core,
-    /// Display a context drawer with the designated page if defined.
     context_page: ContextPage,
-    /// The about page for this app.
     about: About,
-    /// Contains items assigned to the nav bar panel.
-    nav: nav_bar::Model,
-    /// Key bindings for the application's menu bar.
     #[allow(clippy::zero_sized_map_values)]
     key_binds: HashMap<menu::KeyBind, MenuAction>,
-    /// Configuration data that persists between application runs.
-    config: Config,
-    /// Time active
-    time: u32,
-    /// Toggle the watch subscription
-    watch_is_active: bool,
+    document: Option<Document>,
+    summaries: Vec<NoteSummary>,
+    selected_id: Option<NoteId>,
+    selected_note: Option<PileNote>,
+    draft: text_editor::Content,
+    busy: bool,
+    error: Option<String>,
 }
 
 /// Messages emitted by the application and its widgets.
 #[derive(Debug, Clone)]
 pub enum Message {
+    AddNote,
+    ClearError,
+    DocumentLoaded(Result<Option<Document>, String>),
+    DraftEdited(text_editor::Action),
     LaunchUrl(String),
+    NewDocument,
+    NoteAdded(Result<PileNote, String>),
+    NoteLoaded(NoteId, Result<Option<PileNote>, String>),
+    OpenDocument,
+    SelectNote(NoteId),
+    SummariesLoaded(Result<Vec<NoteSummary>, String>),
     ToggleContextPage(ContextPage),
-    ToggleWatch,
-    UpdateConfig(Config),
-    WatchTick(u32),
 }
 
-/// Create a COSMIC application from the app model
 impl cosmic::Application for AppModel {
-    /// The async executor that will be used to run your application's commands.
     type Executor = cosmic::executor::Default;
-    /// Data that your application receives to its init method.
     type Flags = ();
-    /// Messages which the application and its widgets will emit.
     type Message = Message;
 
-    /// Unique identifier in RDNN (reverse domain name notation) format.
-    const APP_ID: &'static str = "dev.mmurphy.Test";
+    const APP_ID: &'static str = "dev.terranul.puck";
 
     fn core(&self) -> &cosmic::Core {
         &self.core
@@ -70,87 +65,57 @@ impl cosmic::Application for AppModel {
         &mut self.core
     }
 
-    /// Initializes the application with any given flags and startup commands.
     fn init(
         core: cosmic::Core,
         _flags: Self::Flags,
     ) -> (Self, Task<cosmic::Action<Self::Message>>) {
-        // Create a nav bar with three page items.
-        let mut nav = nav_bar::Model::default();
-
-        nav.insert()
-            .text(fl!("page-id", num = 1))
-            .data::<Page>(Page::Page1)
-            .icon(icon::from_name("applications-science-symbolic"))
-            .activate();
-
-        nav.insert()
-            .text(fl!("page-id", num = 2))
-            .data::<Page>(Page::Page2)
-            .icon(icon::from_name("applications-system-symbolic"));
-
-        nav.insert()
-            .text(fl!("page-id", num = 3))
-            .data::<Page>(Page::Page3)
-            .icon(icon::from_name("applications-games-symbolic"));
-
-        // Create the about widget
-        let about = About::default()
-            .name(fl!("app-title"))
-            .icon(widget::icon::from_svg_bytes(APP_ICON))
-            .version(env!("CARGO_PKG_VERSION"))
-            .links([(fl!("repository"), REPOSITORY)])
-            .license(env!("CARGO_PKG_LICENSE"));
-
-        // Construct the app model with the runtime's core.
-        let mut app = AppModel {
+        let mut app = Self {
             core,
             context_page: ContextPage::default(),
-            about,
-            nav,
+            about: About::default()
+                .name(fl!("app-title"))
+                .icon(widget::icon::from_svg_bytes(APP_ICON))
+                .version(env!("CARGO_PKG_VERSION"))
+                .links([(fl!("repository"), REPOSITORY)])
+                .license(env!("CARGO_PKG_LICENSE")),
             key_binds: HashMap::new(),
-            // Optional configuration file for an application.
-            config: cosmic_config::Config::new(Self::APP_ID, Config::VERSION)
-                .map(|context| match Config::get_entry(&context) {
-                    Ok(config) => config,
-                    Err((_errors, config)) => {
-                        // for why in errors {
-                        //     tracing::error!(%why, "error loading app config");
-                        // }
-
-                        config
-                    }
-                })
-                .unwrap_or_default(),
-            time: 0,
-            watch_is_active: false,
+            document: None,
+            summaries: Vec::new(),
+            selected_id: None,
+            selected_note: None,
+            draft: text_editor::Content::new(),
+            busy: false,
+            error: None,
         };
-
-        // Create a startup command that sets the window title.
         let command = app.update_title();
 
         (app, command)
     }
 
-    /// Elements to pack at the start of the header bar.
     fn header_start(&self) -> Vec<Element<'_, Self::Message>> {
-        let menu_bar = menu::bar(vec![menu::Tree::with_children(
-            menu::root(fl!("view")).apply(Element::from),
-            menu::items(
-                &self.key_binds,
-                vec![menu::Item::Button(fl!("about"), None, MenuAction::About)],
-            ),
-        )]);
-
-        vec![menu_bar.into()]
+        vec![
+            menu::bar(vec![menu::Tree::with_children(
+                menu::root(fl!("view")).apply(Element::from),
+                menu::items(
+                    &self.key_binds,
+                    vec![menu::Item::Button(fl!("about"), None, MenuAction::About)],
+                ),
+            )])
+            .into(),
+        ]
     }
 
-    /// Enables the COSMIC application to create a nav bar with this model.
-    fn nav_model(&self) -> Option<&nav_bar::Model> {
-        Some(&self.nav)
+    fn header_end(&self) -> Vec<Element<'_, Self::Message>> {
+        vec![
+            widget::button::text(fl!("new-document"))
+                .on_press_maybe((!self.busy).then_some(Message::NewDocument))
+                .into(),
+            widget::button::suggested(fl!("open-document"))
+                .on_press_maybe((!self.busy).then_some(Message::OpenDocument))
+                .into(),
+        ]
     }
 
-    /// Display a context drawer if the context page is requested.
     fn context_drawer(&self) -> Option<context_drawer::ContextDrawer<'_, Self::Message>> {
         if !self.core.window.show_context {
             return None;
@@ -165,196 +130,346 @@ impl cosmic::Application for AppModel {
         })
     }
 
-    /// Describes the interface based on the current state of the application model.
-    ///
-    /// Application events will be processed through the view. Any messages emitted by
-    /// events received by widgets will be passed to the update method.
     fn view(&self) -> Element<'_, Self::Message> {
-        let space_s = cosmic::theme::spacing().space_s;
-        let content: Element<_> = match self.nav.active_data::<Page>().unwrap() {
-            Page::Page1 => {
-                let header = widget::row::with_capacity(2)
-                    .push(widget::text::title1(fl!("welcome")))
-                    .push(widget::text::title3(fl!("page-id", num = 1)))
-                    .align_y(Alignment::End)
-                    .spacing(space_s);
-
-                let counter_label = ["Watch: ", self.time.to_string().as_str()].concat();
-                let section = cosmic::widget::settings::section().add(
-                    cosmic::widget::settings::item::builder(counter_label).control(
-                        widget::button::text(if self.watch_is_active {
-                            "Stop"
-                        } else {
-                            "Start"
-                        })
-                        .on_press(Message::ToggleWatch),
-                    ),
-                );
-
-                widget::column::with_capacity(2)
-                    .push(header)
-                    .push(section)
-                    .spacing(space_s)
-                    .height(Length::Fill)
-                    .into()
-            }
-
-            Page::Page2 => {
-                let header = widget::row::with_capacity(2)
-                    .push(widget::text::title1(fl!("welcome")))
-                    .push(widget::text::title3(fl!("page-id", num = 2)))
-                    .align_y(Alignment::End)
-                    .spacing(space_s);
-
-                widget::column::with_capacity(1)
-                    .push(header)
-                    .spacing(space_s)
-                    .height(Length::Fill)
-                    .into()
-            }
-
-            Page::Page3 => {
-                let header = widget::row::with_capacity(2)
-                    .push(widget::text::title1(fl!("welcome")))
-                    .push(widget::text::title3(fl!("page-id", num = 3)))
-                    .align_y(Alignment::End)
-                    .spacing(space_s);
-
-                widget::column::with_capacity(1)
-                    .push(header)
-                    .spacing(space_s)
-                    .height(Length::Fill)
-                    .into()
-            }
-        };
-
-        widget::container(content)
-            .width(600)
-            .height(Length::Fill)
-            .apply(widget::container)
+        let spacing = cosmic::theme::spacing();
+        let mut content = widget::column::with_capacity(3)
+            .spacing(spacing.space_m)
+            .padding(spacing.space_l)
             .width(Length::Fill)
-            .align_x(Horizontal::Center)
-            .align_y(Vertical::Center)
-            .into()
-    }
+            .height(Length::Fill);
 
-    /// Register subscriptions for this application.
-    ///
-    /// Subscriptions are long-running async tasks running in the background which
-    /// emit messages to the application through a channel. They can be dynamically
-    /// stopped and started conditionally based on application state, or persist
-    /// indefinitely.
-    fn subscription(&self) -> Subscription<Self::Message> {
-        // Add subscriptions which are always active.
-        let mut subscriptions = vec![
-            // Watch for application configuration changes.
-            self.core()
-                .watch_config::<Config>(Self::APP_ID)
-                .map(|update| {
-                    // for why in update.errors {
-                    //     tracing::error!(?why, "app config error");
-                    // }
-
-                    Message::UpdateConfig(update.config)
-                }),
-        ];
-
-        // Conditionally enables a timer that emits a message every second.
-        if self.watch_is_active {
-            subscriptions.push(Subscription::run(|| {
-                cosmic::iced::stream::channel(
-                    1,
-                    |mut emitter: futures::channel::mpsc::Sender<_>| async move {
-                        let mut time = 1;
-                        let mut interval = tokio::time::interval(Duration::from_secs(1));
-
-                        loop {
-                            interval.tick().await;
-                            _ = emitter.send(Message::WatchTick(time)).await;
-                            time += 1;
-                        }
-                    },
-                )
-            }));
+        if let Some(error) = &self.error {
+            content = content.push(widget::warning(error).on_close(Message::ClearError));
         }
 
-        Subscription::batch(subscriptions)
+        if self.document.is_some() {
+            content = content.push(self.document_view());
+        } else {
+            let landing = widget::column::with_capacity(4)
+                .push(widget::text::title1(fl!("app-title")))
+                .push(widget::text(fl!("landing-description")))
+                .push(
+                    widget::button::suggested(fl!("new-document"))
+                        .on_press_maybe((!self.busy).then_some(Message::NewDocument)),
+                )
+                .push(
+                    widget::button::text(fl!("open-document"))
+                        .on_press_maybe((!self.busy).then_some(Message::OpenDocument)),
+                )
+                .spacing(spacing.space_m)
+                .align_x(Alignment::Center);
+
+            content = content.push(
+                widget::container(landing)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            );
+        }
+
+        if self.busy {
+            content = content.push(widget::text(fl!("working")));
+        }
+
+        content.into()
     }
 
-    /// Handles messages emitted by the application and its widgets.
-    ///
-    /// Tasks may be returned for asynchronous execution of code in the background
-    /// on the application's async runtime.
+    #[allow(clippy::too_many_lines)]
     fn update(&mut self, message: Self::Message) -> Task<cosmic::Action<Self::Message>> {
         match message {
-            Message::WatchTick(time) => {
-                self.time = time;
-            }
+            Message::NewDocument => {
+                if self.busy {
+                    return Task::none();
+                }
+                self.busy = true;
+                self.error = None;
+                let title = fl!("new-document");
+                let filter_name = fl!("puck-documents");
 
-            Message::ToggleWatch => {
-                self.watch_is_active = !self.watch_is_active;
-            }
+                return cosmic::task::future(async move {
+                    let filter = FileFilter::new(&filter_name).glob("*.puck");
+                    let result = file_chooser::save::Dialog::new()
+                        .title(title)
+                        .file_name(String::from("notes.puck"))
+                        .filter(filter)
+                        .save_file()
+                        .await;
 
+                    let result = match result {
+                        Ok(response) => match response.url() {
+                            Some(url) => match url.to_file_path() {
+                                Ok(path) => Document::create(path)
+                                    .await
+                                    .map(Some)
+                                    .map_err(|error| error.to_string()),
+                                Err(()) => Err(fl!("invalid-document-path")),
+                            },
+                            None => Ok(None),
+                        },
+                        Err(file_chooser::Error::Cancelled) => Ok(None),
+                        Err(error) => Err(format!("{error:?}")),
+                    };
+
+                    Message::DocumentLoaded(result)
+                });
+            }
+            Message::OpenDocument => {
+                if self.busy {
+                    return Task::none();
+                }
+                self.busy = true;
+                self.error = None;
+                let title = fl!("open-document");
+                let filter_name = fl!("puck-documents");
+
+                return cosmic::task::future(async move {
+                    let filter = FileFilter::new(&filter_name).glob("*.puck");
+                    let result = file_chooser::open::Dialog::new()
+                        .title(title)
+                        .filter(filter)
+                        .open_file()
+                        .await;
+
+                    let result = match result {
+                        Ok(response) => match response.url().to_file_path() {
+                            Ok(path) => Document::open(path)
+                                .await
+                                .map(Some)
+                                .map_err(|error| error.to_string()),
+                            Err(()) => Err(fl!("invalid-document-path")),
+                        },
+                        Err(file_chooser::Error::Cancelled) => Ok(None),
+                        Err(error) => Err(format!("{error:?}")),
+                    };
+
+                    Message::DocumentLoaded(result)
+                });
+            }
+            Message::DocumentLoaded(result) => {
+                self.busy = false;
+                match result {
+                    Ok(Some(document)) => {
+                        self.document = Some(document.clone());
+                        self.summaries.clear();
+                        self.selected_id = None;
+                        self.selected_note = None;
+                        self.draft = text_editor::Content::new();
+                        self.busy = true;
+                        return cosmic::task::batch([
+                            self.update_title(),
+                            load_summaries(document),
+                        ]);
+                    }
+                    Ok(None) => {}
+                    Err(error) => self.error = Some(error),
+                }
+            }
+            Message::SummariesLoaded(result) => {
+                self.busy = false;
+                match result {
+                    Ok(summaries) => {
+                        self.summaries = summaries;
+                        if self.selected_id.is_none()
+                            && let Some(summary) = self.summaries.first()
+                        {
+                            return self.update(Message::SelectNote(summary.id));
+                        }
+                    }
+                    Err(error) => self.error = Some(error),
+                }
+            }
+            Message::SelectNote(id) => {
+                self.selected_id = Some(id);
+                self.selected_note = None;
+                let Some(document) = self.document.clone() else {
+                    return Task::none();
+                };
+
+                return cosmic::task::future(async move {
+                    Message::NoteLoaded(
+                        id,
+                        document.note(id).await.map_err(|error| error.to_string()),
+                    )
+                });
+            }
+            Message::NoteLoaded(id, result) => {
+                if self.selected_id == Some(id) {
+                    match result {
+                        Ok(Some(note)) => self.selected_note = Some(note),
+                        Ok(None) => self.error = Some(fl!("note-not-found")),
+                        Err(error) => self.error = Some(error),
+                    }
+                }
+            }
+            Message::DraftEdited(action) => self.draft.perform(action),
+            Message::AddNote => {
+                let Some(document) = self.document.clone() else {
+                    return Task::none();
+                };
+                if self.busy {
+                    return Task::none();
+                }
+
+                self.busy = true;
+                self.error = None;
+                let note = PileNote::create(self.draft.text());
+
+                return cosmic::task::future(async move {
+                    let result = document
+                        .add_note(note.clone())
+                        .await
+                        .map(|()| note)
+                        .map_err(|error| error.to_string());
+                    Message::NoteAdded(result)
+                });
+            }
+            Message::NoteAdded(result) => {
+                self.busy = false;
+                match result {
+                    Ok(note) => {
+                        self.selected_id = Some(note.id());
+                        self.selected_note = Some(note);
+                        self.draft = text_editor::Content::new();
+                        if let Some(document) = self.document.clone() {
+                            self.busy = true;
+                            return load_summaries(document);
+                        }
+                    }
+                    Err(error) => self.error = Some(error),
+                }
+            }
+            Message::ClearError => self.error = None,
             Message::ToggleContextPage(context_page) => {
                 if self.context_page == context_page {
-                    // Close the context drawer if the toggled context page is the same.
                     self.core.window.show_context = !self.core.window.show_context;
                 } else {
-                    // Open the context drawer to display the requested context page.
                     self.context_page = context_page;
                     self.core.window.show_context = true;
                 }
             }
-
-            Message::UpdateConfig(config) => {
-                self.config = config;
-            }
-
-            Message::LaunchUrl(url) => match open::that_detached(&url) {
-                Ok(()) => {}
-                Err(err) => {
-                    eprintln!("failed to open {url:?}: {err}");
+            Message::LaunchUrl(url) => {
+                if let Err(error) = open::that_detached(&url) {
+                    self.error = Some(error.to_string());
                 }
-            },
+            }
         }
+
         Task::none()
-    }
-
-    /// Called when a nav item is selected.
-    fn on_nav_select(&mut self, id: nav_bar::Id) -> Task<cosmic::Action<Self::Message>> {
-        // Activate the page in the model.
-        self.nav.activate(id);
-
-        self.update_title()
     }
 }
 
 impl AppModel {
-    /// Updates the header and window titles.
-    pub fn update_title(&mut self) -> Task<cosmic::Action<Message>> {
-        let mut window_title = fl!("app-title");
+    fn document_view(&self) -> Element<'_, Message> {
+        let spacing = cosmic::theme::spacing();
+        let document = self
+            .document
+            .as_ref()
+            .expect("document view requires document");
+        let name = document
+            .path()
+            .file_name()
+            .unwrap_or_else(|| document.path().as_os_str())
+            .to_string_lossy();
 
-        if let Some(page) = self.nav.text(self.nav.active()) {
-            window_title.push_str(" — ");
-            window_title.push_str(page);
+        let mut list = widget::list_column::with_capacity(self.summaries.len());
+        for summary in &self.summaries {
+            let preview = if summary.preview.is_empty() {
+                fl!("untitled-note")
+            } else {
+                summary.preview.clone()
+            };
+            list = list.add(
+                widget::list_column::button(widget::text(preview))
+                    .selected(self.selected_id == Some(summary.id))
+                    .on_press(Message::SelectNote(summary.id)),
+            );
+        }
+
+        let notes: Element<_> = if self.summaries.is_empty() {
+            widget::text(fl!("no-notes")).into()
+        } else {
+            widget::scrollable(list).height(Length::Fill).into()
+        };
+
+        let sidebar = widget::column::with_capacity(2)
+            .push(widget::text::title3(fl!("pile")))
+            .push(notes)
+            .spacing(spacing.space_s)
+            .width(260)
+            .height(Length::Fill);
+
+        let body: Element<_> = match &self.selected_note {
+            Some(note) => widget::scrollable(widget::text(note.body()).width(Length::Fill))
+                .height(Length::Fill)
+                .into(),
+            None => widget::container(widget::text(fl!("select-note")))
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+                .into(),
+        };
+
+        let composer = widget::column::with_capacity(3)
+            .push(widget::text::title3(fl!("new-note")))
+            .push(
+                widget::text_editor(&self.draft)
+                    .placeholder(fl!("note-placeholder"))
+                    .height(140)
+                    .on_action(Message::DraftEdited),
+            )
+            .push(
+                widget::button::suggested(fl!("add-note"))
+                    .on_press_maybe((!self.busy).then_some(Message::AddNote)),
+            )
+            .spacing(spacing.space_s);
+
+        let main = widget::column::with_capacity(2)
+            .push(body)
+            .push(composer)
+            .spacing(spacing.space_m)
+            .width(Length::Fill)
+            .height(Length::Fill);
+
+        widget::column::with_capacity(2)
+            .push(widget::text::title2(name))
+            .push(
+                widget::row::with_capacity(2)
+                    .push(sidebar)
+                    .push(main)
+                    .spacing(spacing.space_l)
+                    .height(Length::Fill),
+            )
+            .spacing(spacing.space_m)
+            .height(Length::Fill)
+            .into()
+    }
+
+    fn update_title(&mut self) -> Task<cosmic::Action<Message>> {
+        let mut title = fl!("app-title");
+        if let Some(document) = &self.document
+            && let Some(name) = document.path().file_name()
+        {
+            title.push_str(" — ");
+            title.push_str(&name.to_string_lossy());
         }
 
         if let Some(id) = self.core.main_window_id() {
-            self.set_window_title(window_title, id)
+            self.set_window_title(title, id)
         } else {
             Task::none()
         }
     }
 }
 
-/// The page to display in the application.
-pub enum Page {
-    Page1,
-    Page2,
-    Page3,
+fn load_summaries(document: Document) -> Task<cosmic::Action<Message>> {
+    cosmic::task::future(async move {
+        Message::SummariesLoaded(
+            document
+                .note_summaries()
+                .await
+                .map_err(|error| error.to_string()),
+        )
+    })
 }
 
-/// The context page to display in the context drawer.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub enum ContextPage {
     #[default]
@@ -371,7 +486,7 @@ impl menu::action::MenuAction for MenuAction {
 
     fn message(&self) -> Self::Message {
         match self {
-            MenuAction::About => Message::ToggleContextPage(ContextPage::About),
+            Self::About => Message::ToggleContextPage(ContextPage::About),
         }
     }
 }

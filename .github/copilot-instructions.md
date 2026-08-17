@@ -53,4 +53,4 @@ define the required toolchain, profile, features, and platform flags.
 - New COSMIC UI state should be explicit fields on `AppModel`, with user events added to `Message` and handled in `update`.
 - Long-running UI work belongs in `subscription()` and emits `Message` values rather than spawning detached tasks from widgets.
 - Core note invariants live in constructors/methods returning `Result<_, NoteError>`; keep validation there instead of duplicating it in callers.
-- Config fields live in `src/config.rs` under `#[derive(CosmicConfigEntry)]`; bump the config `#[version = ...]` when changing persisted shape.
+- Add a config module only when the GUI has settings worth persisting.
