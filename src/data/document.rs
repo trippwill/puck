@@ -3,9 +3,15 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use thiserror::Error;
+use time::OffsetDateTime;
+use tokio_rusqlite::rusqlite::types::{
+    FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, Value, ValueRef,
+};
+use tokio_rusqlite::rusqlite::{OptionalExtension, Row, params};
 use tokio_rusqlite::{Connection, OpenFlags};
 
 use super::version::SchemaVersion;
+use crate::core::{NoteError, NoteId, NoteSummary, PileNote};
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"PUCK");
 const CURRENT_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 0);
@@ -27,6 +33,9 @@ pub enum DocumentError {
 
     #[error("Unsupported version for file {0}: maximum supported is {1}, found {2}")]
     UnsupportedVersion(PathBuf, SchemaVersion, SchemaVersion),
+
+    #[error("Invalid persisted note: {0}")]
+    InvalidNote(#[from] NoteError),
 }
 
 impl From<tokio_rusqlite::rusqlite::Error> for DocumentError {
@@ -57,6 +66,57 @@ enum ConnectMode {
 struct DocumentHeader {
     application_id: i32,
     version: SchemaVersion,
+}
+
+struct StoredNote {
+    id: uuid::Uuid,
+    body: String,
+    revision: SqlU64,
+    created_at: OffsetDateTime,
+    updated_at: OffsetDateTime,
+}
+
+struct SqlU64(u64);
+
+impl ToSql for SqlU64 {
+    fn to_sql(&self) -> tokio_rusqlite::rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::Owned(Value::Blob(
+            self.0.to_be_bytes().to_vec(),
+        )))
+    }
+}
+
+impl FromSql for SqlU64 {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        let blob = value.as_blob()?;
+        let bytes = blob.try_into().map_err(|_| FromSqlError::InvalidBlobSize {
+            expected_size: size_of::<u64>(),
+            blob_size: blob.len(),
+        })?;
+        Ok(Self(u64::from_be_bytes(bytes)))
+    }
+}
+
+impl StoredNote {
+    fn read(row: &Row<'_>) -> tokio_rusqlite::rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            body: row.get("body")?,
+            revision: row.get("revision")?,
+            created_at: row.get("created_at")?,
+            updated_at: row.get("updated_at")?,
+        })
+    }
+
+    fn into_note(self) -> Result<PileNote, NoteError> {
+        PileNote::restore(
+            NoteId::from_parts(self.id),
+            self.body,
+            self.revision.0,
+            self.created_at,
+            self.updated_at,
+        )
+    }
 }
 
 impl Document {
@@ -101,6 +161,96 @@ impl Document {
         connect(path, ConnectMode::Open).await
     }
 
+    /// Adds a pile note to the document.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the note cannot be represented or inserted.
+    pub async fn add_note(&self, note: PileNote) -> Result<(), DocumentError> {
+        let id = *note.id().as_uuid();
+        let body = note.body().to_owned();
+        let revision = SqlU64(note.revision());
+        let created_at = note.created_at();
+        let updated_at = note.updated_at();
+
+        self.conn
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+                tx.execute(
+                    r"
+                    INSERT INTO notes (id, body, revision, created_at, updated_at, archived)
+                    VALUES (?1, ?2, ?3, ?4, ?5, 0)
+                    ",
+                    params![id, body, revision, created_at, updated_at],
+                )?;
+                tx.commit()
+            })
+            .await?;
+
+        Ok(())
+    }
+
+    /// Returns pile-note summaries ordered by most recent update.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails or persisted note data is invalid.
+    pub async fn note_summaries(&self) -> Result<Vec<NoteSummary>, DocumentError> {
+        let stored: Vec<StoredNote> = self
+            .conn
+            .call(|conn| {
+                let mut statement = conn.prepare(
+                    r"
+                    SELECT id, body, revision, created_at, updated_at
+                    FROM notes
+                    WHERE archived = 0
+                    ORDER BY updated_at DESC, id DESC
+                    ",
+                )?;
+                statement.query_map([], StoredNote::read)?.collect()
+            })
+            .await?;
+
+        stored
+            .into_iter()
+            .map(|stored| {
+                stored
+                    .into_note()
+                    .map(|note| NoteSummary::from(&note))
+                    .map_err(Into::into)
+            })
+            .collect()
+    }
+
+    /// Returns a pile note by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails or persisted note data is invalid.
+    pub async fn note(&self, id: NoteId) -> Result<Option<PileNote>, DocumentError> {
+        let id = *id.as_uuid();
+        let stored = self
+            .conn
+            .call(move |conn| {
+                conn.query_row(
+                    r"
+                    SELECT id, body, revision, created_at, updated_at
+                    FROM notes
+                    WHERE id = ?1 AND archived = 0
+                    ",
+                    [id],
+                    StoredNote::read,
+                )
+                .optional()
+            })
+            .await?;
+
+        stored
+            .map(StoredNote::into_note)
+            .transpose()
+            .map_err(Into::into)
+    }
+
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
@@ -127,9 +277,28 @@ async fn prepare_connection(
         )?;
 
         if let ConnectMode::Create = kind {
-            conn.pragma_update(None, "application_id", APPLICATION_ID)?;
-            conn.pragma_update(None, "user_version", i32::from(CURRENT_VERSION))?;
-            // TODO: Create the necessary tables and schema for a new document here.
+            let tx = conn.transaction()?;
+            tx.pragma_update(None, "application_id", APPLICATION_ID)?;
+            tx.pragma_update(None, "user_version", i32::from(CURRENT_VERSION))?;
+            tx.execute_batch(
+                r"
+                CREATE TABLE notes (
+                    id BLOB PRIMARY KEY NOT NULL
+                        CHECK (typeof(id) = 'blob' AND length(id) = 16),
+                    body TEXT NOT NULL,
+                    revision BLOB NOT NULL
+                        CHECK (
+                            typeof(revision) = 'blob'
+                            AND length(revision) = 8
+                            AND revision != x'0000000000000000'
+                        ),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL CHECK (updated_at >= created_at),
+                    archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1))
+                ) STRICT;
+                ",
+            )?;
+            tx.commit()?;
         }
 
         let application_id =
@@ -268,5 +437,117 @@ mod tests {
         assert_eq!(SchemaVersion::from_i32(user_version), CURRENT_VERSION);
         drop(document);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn notes_round_trip_and_list_by_update_time() {
+        let path = std::env::temp_dir().join(format!("puck-{}.db", uuid::Uuid::now_v7()));
+        let document = Document::create(&path).await.unwrap();
+        let now = OffsetDateTime::now_utc();
+        let older = PileNote::restore(
+            NoteId::new(),
+            String::from("Older\nsecond line"),
+            u64::MAX,
+            now - time::Duration::SECOND,
+            now - time::Duration::SECOND,
+        )
+        .unwrap();
+        let newer = PileNote::restore(NoteId::new(), String::from("Newer"), 1, now, now).unwrap();
+        let older_id = older.id();
+        let newer_id = newer.id();
+
+        document.add_note(older.clone()).await.unwrap();
+        document.add_note(newer.clone()).await.unwrap();
+
+        let stored = document.note(older_id).await.unwrap().unwrap();
+        assert_eq!(stored, older);
+        assert_eq!(document.note(NoteId::new()).await.unwrap(), None);
+
+        let summaries = document.note_summaries().await.unwrap();
+        assert_eq!(
+            summaries
+                .iter()
+                .map(|summary| summary.id)
+                .collect::<Vec<_>>(),
+            [newer_id, older_id]
+        );
+        assert_eq!(summaries[1].preview, "Older");
+
+        let row = document
+            .conn
+            .call(move |conn| {
+                conn.query_row(
+                    r"
+                    SELECT id, body, revision, created_at, updated_at, archived
+                    FROM notes
+                    WHERE id = ?1
+                    ",
+                    [*older_id.as_uuid()],
+                    |row| {
+                        Ok((
+                            row.get::<_, uuid::Uuid>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Vec<u8>>(2)?,
+                            row.get::<_, OffsetDateTime>(3)?,
+                            row.get::<_, OffsetDateTime>(4)?,
+                            row.get::<_, i64>(5)?,
+                        ))
+                    },
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(row.0, *older_id.as_uuid());
+        assert_eq!(row.1, older.body());
+        assert_eq!(row.2, older.revision().to_be_bytes());
+        assert_eq!(row.3, older.created_at());
+        assert_eq!(row.4, older.updated_at());
+        assert_eq!(row.5, 0);
+
+        drop(document);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn invalid_persisted_note_is_rejected() {
+        let path = std::env::temp_dir().join(format!("puck-{}.db", uuid::Uuid::now_v7()));
+        let document = Document::create(&path).await.unwrap();
+        let id = uuid::Uuid::now_v7();
+        let now = OffsetDateTime::now_utc();
+
+        document
+            .conn
+            .call(move |conn| {
+                conn.execute_batch("PRAGMA ignore_check_constraints = ON;")?;
+                conn.execute(
+                    r"
+                    INSERT INTO notes (id, body, revision, created_at, updated_at, archived)
+                    VALUES (?1, 'Invalid', ?2, ?3, ?3, 0)
+                    ",
+                    params![id, SqlU64(0), now],
+                )?;
+                Ok::<(), tokio_rusqlite::rusqlite::Error>(())
+            })
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            document.note(NoteId::from_parts(id)).await,
+            Err(DocumentError::InvalidNote(NoteError::InvalidRevision))
+        ));
+
+        drop(document);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn sql_u64_rejects_wrong_blob_size() {
+        assert!(matches!(
+            SqlU64::column_result(ValueRef::Blob(&[0; 7])),
+            Err(FromSqlError::InvalidBlobSize {
+                expected_size: 8,
+                blob_size: 7
+            })
+        ));
     }
 }

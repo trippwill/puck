@@ -36,7 +36,8 @@ define the required toolchain, profile, features, and platform flags.
   format.
 - Collections, records, and field definitions have domain identity. Field values do not: a value is
   identified by its `(RecordId, FieldDefId)` relationship and is replaced in place.
-- `src/bin/puckctl.rs` is a separate CLI binary using clap/tracing. It currently only parses `document new <file>` and logs the intended action.
+- `src/bin/puckctl.rs` is a separate CLI binary using clap/tracing. It creates/checks documents and
+  supports adding, listing, and reading pile notes under `document note`.
 - Localization is embedded from `i18n/` with `rust-embed` and `i18n-embed`; UI strings should use the exported `fl!` macro and entries in `i18n/en/puck.ftl`.
 - `resources/` plus `justfile` handle Linux desktop/appstream/icon installation. Keep packaging app IDs and `AppModel::APP_ID` aligned when changing identity/config behavior.
 

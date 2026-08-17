@@ -12,6 +12,14 @@ pub const MAX_PREVIEW_CHARS: usize = 72;
 
 uuidv7_id!(NoteId);
 
+impl std::str::FromStr for NoteId {
+    type Err = uuid::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        value.parse().map(Self::from_parts)
+    }
+}
+
 /// An error creating, restoring, or editing a pile note.
 #[derive(Debug, Error)]
 pub enum NoteError {
@@ -331,5 +339,12 @@ mod tests {
         assert_eq!(recovered_note.body(), overflowed_note.body());
         assert_eq!(recovered_note.created_at(), overflowed_note.created_at());
         assert!(recovered_note.updated_at() > overflowed_note.updated_at());
+    }
+
+    #[test]
+    fn note_ids_parse_from_their_display_form() {
+        let note = Note::create("Some body");
+
+        assert_eq!(note.id().to_string().parse::<NoteId>().unwrap(), note.id());
     }
 }

@@ -1,3 +1,5 @@
+set positional-arguments
+
 # Name of the application's binary.
 name := 'puck'
 # The unique ID of the application.
@@ -76,7 +78,7 @@ test *args:
 
 # Run the application for testing purposes
 run *args:
-    env RUST_BACKTRACE=full CARGO_PROFILE_RELEASE_LTO=off RUSTFLAGS="-C link-arg=-fuse-ld=mold" cargo run --release --locked {{args}}
+    env RUST_BACKTRACE=full CARGO_PROFILE_RELEASE_LTO=off RUSTFLAGS="-C link-arg=-fuse-ld=mold" cargo run --release --locked "$@"
 
 # Installs files
 install:
