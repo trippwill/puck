@@ -206,6 +206,9 @@ impl FieldType for Timestamp {
 
 #[cfg(test)]
 mod tests {
+    use time::Month;
+    use time::macros::timestamp;
+
     use super::*;
     use crate::core::Collection;
 
@@ -234,5 +237,30 @@ mod tests {
         assert_eq!(field.def_id(), def_id);
         assert_eq!(field.record_id(), record.id());
         assert_eq!(field.val(), "alpha-01");
+    }
+
+    #[test]
+    fn built_in_field_types_accept_their_values() {
+        let record = Collection::new("Values").new_record();
+        let date = time::Date::from_calendar_date(2026, Month::August, 18).unwrap();
+        let time = time::Time::from_hms(15, 51, 0).unwrap();
+        let timestamp = timestamp!(1_787_069_460);
+
+        assert_eq!(
+            record
+                .new_field(&Text::def("Text"), String::from("alpha-01"))
+                .val(),
+            "alpha-01"
+        );
+        assert!(*record.new_field(&Boolean::def("Boolean"), true).val());
+        assert_eq!(*record.new_field(&Integer::def("Integer"), 3).val(), 3);
+        assert_eq!(*record.new_field(&Date::def("Date"), date).val(), date);
+        assert_eq!(*record.new_field(&Time::def("Time"), time).val(), time);
+        assert_eq!(
+            *record
+                .new_field(&Timestamp::def("Timestamp"), timestamp)
+                .val(),
+            timestamp
+        );
     }
 }

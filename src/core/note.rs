@@ -314,11 +314,19 @@ mod tests {
 
     #[test]
     fn summary_uses_and_truncates_only_the_first_line() {
+        assert!(NoteSummary::from(&Note::create("")).preview.is_empty());
+
         let short = Note::create(
             r#"Short title
             This second line is deliberately much longer than the preview limit and must not affect truncation"#,
         );
         assert_eq!(NoteSummary::from(&short).preview, "Short title");
+
+        let exact = "x".repeat(MAX_PREVIEW_CHARS);
+        assert_eq!(
+            NoteSummary::from(&Note::create(exact.clone())).preview,
+            exact
+        );
 
         let body = "🦀".repeat(MAX_PREVIEW_CHARS + 1);
         let note = Note::create(body);
