@@ -10,7 +10,7 @@ use cosmic::prelude::*;
 use cosmic::widget::about::About;
 use cosmic::widget::{self, menu};
 
-use crate::core::{NoteId, NoteSummary, PileNote};
+use crate::core::{ArchiveNote, NoteId, NoteSummary, PileNote};
 use crate::data::prelude::*;
 use crate::fl;
 
@@ -25,9 +25,10 @@ pub struct AppModel {
     #[allow(clippy::zero_sized_map_values)]
     key_binds: HashMap<menu::KeyBind, MenuAction>,
     document: Option<Document>,
+    list: NoteList,
     summaries: Vec<NoteSummary>,
     selected_id: Option<NoteId>,
-    selected_note: Option<PileNote>,
+    selected_note: Option<SelectedNote>,
     draft: text_editor::Content,
     edit_draft: text_editor::Content,
     editing: bool,
@@ -39,6 +40,8 @@ pub struct AppModel {
 #[derive(Debug, Clone)]
 pub enum Message {
     AddNote,
+    ArchiveNote,
+    ArchivedNoteLoaded(NoteId, Result<Option<ArchiveNote>, String>),
     CancelEditing,
     ClearError,
     DocumentLoaded(Result<Option<Document>, String>),
@@ -50,11 +53,29 @@ pub enum Message {
     NoteAdded(Result<PileNote, String>),
     NoteEdited(Result<PileNote, String>),
     NoteLoaded(NoteId, Result<Option<PileNote>, String>),
+    NoteMoved(Result<(), String>),
     OpenDocument,
+    RestoreNote,
     SaveNote,
     SelectNote(NoteId),
-    SummariesLoaded(Result<Vec<NoteSummary>, String>),
+    ShowNotes(NoteList),
+    SummariesLoaded(NoteList, Result<Vec<NoteSummary>, String>),
     ToggleContextPage(ContextPage),
+}
+
+/// The note list shown in the document sidebar.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum NoteList {
+    /// Notes in the active pile.
+    Pile,
+    /// Notes retained in the archive.
+    Archive,
+}
+
+#[derive(Debug, Clone)]
+enum SelectedNote {
+    Pile(PileNote),
+    Archive(ArchiveNote),
 }
 
 impl cosmic::Application for AppModel {
@@ -87,6 +108,7 @@ impl cosmic::Application for AppModel {
                 .license(env!("CARGO_PKG_LICENSE")),
             key_binds: HashMap::new(),
             document: None,
+            list: NoteList::Pile,
             summaries: Vec::new(),
             selected_id: None,
             selected_note: None,
@@ -258,6 +280,7 @@ impl cosmic::Application for AppModel {
                 match result {
                     Ok(Some(document)) => {
                         self.document = Some(document.clone());
+                        self.list = NoteList::Pile;
                         self.summaries.clear();
                         self.selected_id = None;
                         self.selected_note = None;
@@ -267,26 +290,52 @@ impl cosmic::Application for AppModel {
                         self.busy = true;
                         return cosmic::task::batch([
                             self.update_title(),
-                            load_summaries(document),
+                            load_summaries(document, NoteList::Pile),
                         ]);
                     }
                     Ok(None) => {}
                     Err(error) => self.error = Some(error),
                 }
             }
-            Message::SummariesLoaded(result) => {
+            Message::SummariesLoaded(list, result) => {
+                if list != self.list {
+                    return Task::none();
+                }
                 self.busy = false;
                 match result {
                     Ok(summaries) => {
                         self.summaries = summaries;
-                        if self.selected_id.is_none()
-                            && let Some(summary) = self.summaries.first()
+                        if self
+                            .selected_id
+                            .is_none_or(|id| !self.summaries.iter().any(|note| note.id == id))
                         {
-                            return self.update(Message::SelectNote(summary.id));
+                            self.selected_id = None;
+                            self.selected_note = None;
+                            self.edit_draft = text_editor::Content::new();
+                            self.editing = false;
+                            if let Some(summary) = self.summaries.first() {
+                                return self.update(Message::SelectNote(summary.id));
+                            }
                         }
                     }
                     Err(error) => self.error = Some(error),
                 }
+            }
+            Message::ShowNotes(list) => {
+                if self.busy || self.editing || self.list == list {
+                    return Task::none();
+                }
+                let Some(document) = self.document.clone() else {
+                    return Task::none();
+                };
+
+                self.list = list.clone();
+                self.summaries.clear();
+                self.selected_id = None;
+                self.selected_note = None;
+                self.busy = true;
+                self.error = None;
+                return load_summaries(document, list);
             }
             Message::SelectNote(id) => {
                 if self.editing {
@@ -298,21 +347,45 @@ impl cosmic::Application for AppModel {
                     return Task::none();
                 };
 
-                return cosmic::task::future(async move {
-                    Message::NoteLoaded(
-                        id,
-                        document
-                            .query(NoteById(id))
-                            .await
-                            .map_err(|error| error.to_string()),
-                    )
-                });
+                return match self.list {
+                    NoteList::Pile => cosmic::task::future(async move {
+                        Message::NoteLoaded(
+                            id,
+                            document
+                                .query(NoteById(id))
+                                .await
+                                .map_err(|error| error.to_string()),
+                        )
+                    }),
+                    NoteList::Archive => cosmic::task::future(async move {
+                        Message::ArchivedNoteLoaded(
+                            id,
+                            document
+                                .query(ArchivedNoteById(id))
+                                .await
+                                .map_err(|error| error.to_string()),
+                        )
+                    }),
+                };
             }
             Message::NoteLoaded(id, result) => {
-                if self.selected_id == Some(id) {
+                if self.list == NoteList::Pile && self.selected_id == Some(id) {
                     match result {
                         Ok(Some(note)) => {
-                            self.selected_note = Some(note);
+                            self.selected_note = Some(SelectedNote::Pile(note));
+                            self.edit_draft = text_editor::Content::new();
+                            self.editing = false;
+                        }
+                        Ok(None) => self.error = Some(fl!("note-not-found")),
+                        Err(error) => self.error = Some(error),
+                    }
+                }
+            }
+            Message::ArchivedNoteLoaded(id, result) => {
+                if self.list == NoteList::Archive && self.selected_id == Some(id) {
+                    match result {
+                        Ok(Some(note)) => {
+                            self.selected_note = Some(SelectedNote::Archive(note));
                             self.edit_draft = text_editor::Content::new();
                             self.editing = false;
                         }
@@ -327,7 +400,7 @@ impl cosmic::Application for AppModel {
                 if self.busy || self.editing {
                     return Task::none();
                 }
-                let Some(note) = &self.selected_note else {
+                let Some(SelectedNote::Pile(note)) = &self.selected_note else {
                     return Task::none();
                 };
                 self.edit_draft = text_editor::Content::with_text(note.body());
@@ -346,7 +419,7 @@ impl cosmic::Application for AppModel {
                 let Some(document) = self.document.clone() else {
                     return Task::none();
                 };
-                let Some(note) = &self.selected_note else {
+                let Some(SelectedNote::Pile(note)) = &self.selected_note else {
                     return Task::none();
                 };
                 let body = self.edit_draft.text();
@@ -373,6 +446,9 @@ impl cosmic::Application for AppModel {
                 });
             }
             Message::AddNote => {
+                if self.list != NoteList::Pile {
+                    return Task::none();
+                }
                 let Some(document) = self.document.clone() else {
                     return Task::none();
                 };
@@ -398,11 +474,11 @@ impl cosmic::Application for AppModel {
                 match result {
                     Ok(note) => {
                         self.selected_id = Some(note.id());
-                        self.selected_note = Some(note);
+                        self.selected_note = Some(SelectedNote::Pile(note));
                         self.draft = text_editor::Content::new();
                         if let Some(document) = self.document.clone() {
                             self.busy = true;
-                            return load_summaries(document);
+                            return load_summaries(document, NoteList::Pile);
                         }
                     }
                     Err(error) => self.error = Some(error),
@@ -413,12 +489,72 @@ impl cosmic::Application for AppModel {
                 match result {
                     Ok(note) => {
                         self.selected_id = Some(note.id());
-                        self.selected_note = Some(note);
+                        self.selected_note = Some(SelectedNote::Pile(note));
                         self.edit_draft = text_editor::Content::new();
                         self.editing = false;
                         if let Some(document) = self.document.clone() {
                             self.busy = true;
-                            return load_summaries(document);
+                            return load_summaries(document, NoteList::Pile);
+                        }
+                    }
+                    Err(error) => self.error = Some(error),
+                }
+            }
+            Message::ArchiveNote => {
+                if self.busy || self.editing {
+                    return Task::none();
+                }
+                let Some(document) = self.document.clone() else {
+                    return Task::none();
+                };
+                let Some(SelectedNote::Pile(note)) = &self.selected_note else {
+                    return Task::none();
+                };
+                let note = note.clone().archive();
+
+                self.busy = true;
+                self.error = None;
+                return cosmic::task::future(async move {
+                    Message::NoteMoved(
+                        document
+                            .execute(vec![Command::ArchiveNote(note)])
+                            .await
+                            .map_err(|error| error.to_string()),
+                    )
+                });
+            }
+            Message::RestoreNote => {
+                if self.busy || self.editing {
+                    return Task::none();
+                }
+                let Some(document) = self.document.clone() else {
+                    return Task::none();
+                };
+                let Some(SelectedNote::Archive(note)) = &self.selected_note else {
+                    return Task::none();
+                };
+                let note = note.clone().unarchive();
+
+                self.busy = true;
+                self.error = None;
+                return cosmic::task::future(async move {
+                    Message::NoteMoved(
+                        document
+                            .execute(vec![Command::UnarchiveNote(note)])
+                            .await
+                            .map_err(|error| error.to_string()),
+                    )
+                });
+            }
+            Message::NoteMoved(result) => {
+                self.busy = false;
+                match result {
+                    Ok(()) => {
+                        self.selected_id = None;
+                        self.selected_note = None;
+                        if let Some(document) = self.document.clone() {
+                            self.busy = true;
+                            return load_summaries(document, self.list.clone());
                         }
                     }
                     Err(error) => self.error = Some(error),
@@ -475,20 +611,48 @@ impl AppModel {
         }
 
         let notes: Element<_> = if self.summaries.is_empty() {
-            widget::text(fl!("no-notes")).into()
+            widget::text(match self.list {
+                NoteList::Pile => fl!("no-notes"),
+                NoteList::Archive => fl!("no-archived-notes"),
+            })
+            .into()
         } else {
             widget::scrollable(list).height(Length::Fill).into()
         };
 
+        let pile_button = if self.list == NoteList::Pile {
+            widget::button::suggested(fl!("pile"))
+        } else {
+            widget::button::text(fl!("pile"))
+        }
+        .on_press_maybe(
+            (!self.busy && !self.editing && self.list != NoteList::Pile)
+                .then_some(Message::ShowNotes(NoteList::Pile)),
+        );
+        let archive_button = if self.list == NoteList::Archive {
+            widget::button::suggested(fl!("archive"))
+        } else {
+            widget::button::text(fl!("archive"))
+        }
+        .on_press_maybe(
+            (!self.busy && !self.editing && self.list != NoteList::Archive)
+                .then_some(Message::ShowNotes(NoteList::Archive)),
+        );
+
         let sidebar = widget::column::with_capacity(2)
-            .push(widget::text::title3(fl!("pile")))
+            .push(
+                widget::row::with_capacity(2)
+                    .push(pile_button)
+                    .push(archive_button)
+                    .spacing(spacing.space_s),
+            )
             .push(notes)
             .spacing(spacing.space_s)
             .width(260)
             .height(Length::Fill);
 
         let body: Element<_> = match (&self.selected_note, self.editing) {
-            (Some(note), true) => {
+            (Some(SelectedNote::Pile(note)), true) => {
                 let editor = widget::text_editor(&self.edit_draft).height(Length::Fill);
                 let editor = if self.busy {
                     editor
@@ -516,14 +680,34 @@ impl AppModel {
                     .height(Length::Fill)
                     .into()
             }
-            (Some(note), false) => widget::column::with_capacity(2)
+            (Some(SelectedNote::Pile(note)), false) => widget::column::with_capacity(2)
                 .push(
                     widget::scrollable(widget::text(note.body()).width(Length::Fill))
                         .height(Length::Fill),
                 )
                 .push(
-                    widget::button::text(fl!("edit-note"))
-                        .on_press_maybe((!self.busy).then_some(Message::EditNote)),
+                    widget::row::with_capacity(2)
+                        .push(
+                            widget::button::text(fl!("edit-note"))
+                                .on_press_maybe((!self.busy).then_some(Message::EditNote)),
+                        )
+                        .push(
+                            widget::button::text(fl!("archive"))
+                                .on_press_maybe((!self.busy).then_some(Message::ArchiveNote)),
+                        )
+                        .spacing(spacing.space_s),
+                )
+                .spacing(spacing.space_s)
+                .height(Length::Fill)
+                .into(),
+            (Some(SelectedNote::Archive(note)), _) => widget::column::with_capacity(2)
+                .push(
+                    widget::scrollable(widget::text(note.body()).width(Length::Fill))
+                        .height(Length::Fill),
+                )
+                .push(
+                    widget::button::suggested(fl!("restore-note"))
+                        .on_press_maybe((!self.busy).then_some(Message::RestoreNote)),
                 )
                 .spacing(spacing.space_s)
                 .height(Length::Fill)
@@ -549,7 +733,7 @@ impl AppModel {
             .spacing(spacing.space_s);
 
         let mut main = widget::column::with_capacity(2).push(body);
-        if !self.editing {
+        if !self.editing && self.list == NoteList::Pile {
             main = main.push(composer);
         }
         let main = main
@@ -588,14 +772,15 @@ impl AppModel {
     }
 }
 
-fn load_summaries(document: Document) -> Task<cosmic::Action<Message>> {
+fn load_summaries(document: Document, list: NoteList) -> Task<cosmic::Action<Message>> {
     cosmic::task::future(async move {
-        Message::SummariesLoaded(
-            document
-                .query(NoteSummaries)
-                .await
-                .map_err(|error| error.to_string()),
-        )
+        let result = match &list {
+            NoteList::Pile => document.query(NoteSummaries).await,
+            NoteList::Archive => document.query(ArchivedNoteSummaries).await,
+        }
+        .map_err(|error| error.to_string());
+
+        Message::SummariesLoaded(list, result)
     })
 }
 
