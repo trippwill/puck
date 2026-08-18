@@ -31,6 +31,7 @@ pub struct AppModel {
     selected_note: Option<SelectedNote>,
     draft: text_editor::Content,
     edit_draft: text_editor::Content,
+    search: String,
     editing: bool,
     busy: bool,
     error: Option<String>,
@@ -43,6 +44,7 @@ pub enum Message {
     ArchiveNote,
     ArchivedNoteLoaded(NoteId, Result<Option<ArchiveNote>, String>),
     CancelEditing,
+    ClearSearch,
     ClearError,
     DocumentLoaded(Result<Option<Document>, String>),
     DraftEdited(text_editor::Action),
@@ -57,6 +59,8 @@ pub enum Message {
     OpenDocument,
     RestoreNote,
     SaveNote,
+    SearchChanged(String),
+    SearchNotes,
     SelectNote(NoteId),
     ShowNotes(NoteList),
     SummariesLoaded(NoteList, Result<Vec<NoteSummary>, String>),
@@ -70,6 +74,8 @@ pub enum NoteList {
     Pile,
     /// Notes retained in the archive.
     Archive,
+    /// Active notes whose bodies contain the given string.
+    Search(String),
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +120,7 @@ impl cosmic::Application for AppModel {
             selected_note: None,
             draft: text_editor::Content::new(),
             edit_draft: text_editor::Content::new(),
+            search: String::new(),
             editing: false,
             busy: false,
             error: None,
@@ -286,6 +293,7 @@ impl cosmic::Application for AppModel {
                         self.selected_note = None;
                         self.draft = text_editor::Content::new();
                         self.edit_draft = text_editor::Content::new();
+                        self.search.clear();
                         self.editing = false;
                         self.busy = true;
                         return cosmic::task::batch([
@@ -333,6 +341,9 @@ impl cosmic::Application for AppModel {
                 self.summaries.clear();
                 self.selected_id = None;
                 self.selected_note = None;
+                if !matches!(list, NoteList::Search(_)) {
+                    self.search.clear();
+                }
                 self.busy = true;
                 self.error = None;
                 return load_summaries(document, list);
@@ -348,7 +359,7 @@ impl cosmic::Application for AppModel {
                 };
 
                 return match self.list {
-                    NoteList::Pile => cosmic::task::future(async move {
+                    NoteList::Pile | NoteList::Search(_) => cosmic::task::future(async move {
                         Message::NoteLoaded(
                             id,
                             document
@@ -369,7 +380,9 @@ impl cosmic::Application for AppModel {
                 };
             }
             Message::NoteLoaded(id, result) => {
-                if self.list == NoteList::Pile && self.selected_id == Some(id) {
+                if matches!(self.list, NoteList::Pile | NoteList::Search(_))
+                    && self.selected_id == Some(id)
+                {
                     match result {
                         Ok(Some(note)) => {
                             self.selected_note = Some(SelectedNote::Pile(note));
@@ -478,7 +491,7 @@ impl cosmic::Application for AppModel {
                         self.draft = text_editor::Content::new();
                         if let Some(document) = self.document.clone() {
                             self.busy = true;
-                            return load_summaries(document, NoteList::Pile);
+                            return load_summaries(document, self.list.clone());
                         }
                     }
                     Err(error) => self.error = Some(error),
@@ -494,7 +507,7 @@ impl cosmic::Application for AppModel {
                         self.editing = false;
                         if let Some(document) = self.document.clone() {
                             self.busy = true;
-                            return load_summaries(document, NoteList::Pile);
+                            return load_summaries(document, self.list.clone());
                         }
                     }
                     Err(error) => self.error = Some(error),
@@ -560,6 +573,22 @@ impl cosmic::Application for AppModel {
                     Err(error) => self.error = Some(error),
                 }
             }
+            Message::SearchChanged(search) => self.search = search,
+            Message::ClearSearch => {
+                self.search.clear();
+                return self.update(Message::ShowNotes(NoteList::Pile));
+            }
+            Message::SearchNotes => {
+                if self.busy || self.editing || self.list == NoteList::Archive {
+                    return Task::none();
+                }
+                let list = if self.search.is_empty() {
+                    NoteList::Pile
+                } else {
+                    NoteList::Search(self.search.clone())
+                };
+                return self.update(Message::ShowNotes(list));
+            }
             Message::ClearError => self.error = None,
             Message::ToggleContextPage(context_page) => {
                 if self.context_page == context_page {
@@ -611,9 +640,10 @@ impl AppModel {
         }
 
         let notes: Element<_> = if self.summaries.is_empty() {
-            widget::text(match self.list {
+            widget::text(match &self.list {
                 NoteList::Pile => fl!("no-notes"),
                 NoteList::Archive => fl!("no-archived-notes"),
+                NoteList::Search(_) => fl!("no-search-results"),
             })
             .into()
         } else {
@@ -639,7 +669,29 @@ impl AppModel {
                 .then_some(Message::ShowNotes(NoteList::Archive)),
         );
 
-        let sidebar = widget::column::with_capacity(2)
+        let mut sidebar = widget::column::with_capacity(3);
+        if self.list != NoteList::Archive {
+            let search = widget::text_input::search_input(fl!("search-placeholder"), &self.search);
+            let search = if self.busy || self.editing {
+                search
+            } else {
+                search
+                    .on_input(Message::SearchChanged)
+                    .on_submit(|_| Message::SearchNotes)
+                    .on_clear(Message::ClearSearch)
+            };
+            sidebar = sidebar.push(
+                widget::row::with_capacity(2)
+                    .push(search)
+                    .push(
+                        widget::button::suggested(fl!("search-notes")).on_press_maybe(
+                            (!self.busy && !self.editing).then_some(Message::SearchNotes),
+                        ),
+                    )
+                    .spacing(spacing.space_s),
+            );
+        }
+        let sidebar = sidebar
             .push(
                 widget::row::with_capacity(2)
                     .push(pile_button)
@@ -777,6 +829,7 @@ fn load_summaries(document: Document, list: NoteList) -> Task<cosmic::Action<Mes
         let result = match &list {
             NoteList::Pile => document.query(NoteSummaries).await,
             NoteList::Archive => document.query(ArchivedNoteSummaries).await,
+            NoteList::Search(query) => document.query(NoteSearch(query.clone())).await,
         }
         .map_err(|error| error.to_string());
 
