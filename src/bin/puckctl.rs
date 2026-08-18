@@ -74,6 +74,8 @@ enum NoteCommands {
         file: PathBuf,
         note: NoteId,
     },
+    /// Return an archived note to the active pile.
+    Unarchive { file: PathBuf, note: NoteId },
 }
 
 #[derive(Debug, Error)]
@@ -188,6 +190,15 @@ async fn run(command: Commands) -> Result<(), CliError> {
                             .ok_or(CliError::NoteNotFound(note))?;
                         print!("{}", note.body());
                     }
+                }
+                NoteCommands::Unarchive { file, note } => {
+                    let document = Document::open(file).await?;
+                    let note = document
+                        .query(ArchivedNoteById(note))
+                        .await?
+                        .ok_or(CliError::NoteNotFound(note))?
+                        .unarchive();
+                    document.execute(vec![Command::UnarchiveNote(note)]).await?;
                 }
             },
         },

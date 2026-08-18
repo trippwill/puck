@@ -166,4 +166,42 @@ fn notes_can_be_managed() {
         .status
         .success()
     );
+
+    assert!(
+        puckctl(&["document", "note", "unarchive", path, &first_id])
+            .status
+            .success()
+    );
+    let list = String::from_utf8(puckctl(&["document", "note", "list", path]).stdout).unwrap();
+    assert!(
+        list.lines()
+            .any(|line| line.starts_with(&format!("{first_id}\t2\t")))
+    );
+    let read = puckctl(&["document", "note", "read", path, &first_id]);
+    assert!(read.status.success());
+    assert_eq!(read.stdout, b"alpha-01 moved to 192.168.1.11");
+    let archived = puckctl(&["document", "note", "list", "--archived", path]);
+    assert!(archived.status.success());
+    assert!(
+        !String::from_utf8(archived.stdout)
+            .unwrap()
+            .contains(&first_id)
+    );
+
+    assert!(
+        !puckctl(&["document", "note", "unarchive", path, &first_id])
+            .status
+            .success()
+    );
+    assert!(
+        !puckctl(&[
+            "document",
+            "note",
+            "unarchive",
+            path,
+            &uuid::Uuid::now_v7().to_string(),
+        ])
+        .status
+        .success()
+    );
 }

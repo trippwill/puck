@@ -14,6 +14,8 @@ pub enum Command {
     ArchiveNote(ArchiveNote),
     /// Persists an edited pile note.
     EditNote(PileNote),
+    /// Returns an archived note to the active pile.
+    UnarchiveNote(PileNote),
 }
 
 impl Command {
@@ -22,6 +24,7 @@ impl Command {
             Command::AddNote(note) => Command::add_note(tx, &note),
             Command::ArchiveNote(note) => Command::set_archived(tx, note.id(), true),
             Command::EditNote(note) => Command::edit_note(tx, &note),
+            Command::UnarchiveNote(note) => Command::set_archived(tx, note.id(), false),
         }
     }
 
