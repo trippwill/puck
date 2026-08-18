@@ -57,15 +57,21 @@ build-release *args: (build-debug '--release' args)
 # Compiles release profile with vendored dependencies
 build-vendored *args: vendor-extract (build-release '--frozen --offline' args)
 
-# Runs a clippy check
-check *args:
+# Adds missing MPL headers, then runs a clippy check
+check *args: license-headers
     cargo clippy --all-features --locked {{args}} -- -W clippy::pedantic
 
 # Runs a clippy check with JSON message format
 check-json: (check '--message-format=json')
 
+# Adds missing MPL headers to first-party source
+license-headers:
+    mise exec -- licensesnip src
+    mise exec -- licensesnip tests
+    mise exec -- licensesnip scripts
+
 fmt *args:
-    cargo +nightly fmt --all {{args}}
+    cargo +nightly-2026-08-05 fmt --all {{args}}
 
 
 [linux]

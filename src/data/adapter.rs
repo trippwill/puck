@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 use time::OffsetDateTime;
 use tokio_rusqlite::{Row, rusqlite};
 

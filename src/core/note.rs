@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Immutable revisions of free-form notes.
 
 use thiserror::Error;

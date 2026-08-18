@@ -11,7 +11,7 @@ A [justfile](./justfile) is included by default for the [casey/just][just] comma
 - `just install` installs the project into the system
 - `just vendor` creates a vendored tarball
 - `just build-vendored` compiles with vendored dependencies from that tarball
-- `just check` runs clippy on the project to check for linter warnings
+- `just check` adds missing MPL headers and runs clippy on the project
 - `just check-json` can be used by IDEs that support LSP
 
 ## Translators
@@ -32,12 +32,17 @@ It is recommended to build a source tarball with the vendored dependencies, whic
 
 ## Developers
 
-Developers should install [rustup][rustup] and configure their editor to use [rust-analyzer][rust-analyzer]. To improve compilation times, disable LTO in the release profile, install the [mold][mold] linker, and configure [sccache][sccache] for use with Rust. The [mold][mold] linker will only improve link times if LTO is disabled.
+Developers should install [rustup][rustup] and [mise][mise], then run `mise install` to
+install the pinned auxiliary tools. Rustup uses [`rust-toolchain.toml`](./rust-toolchain.toml)
+to install the project's Rust toolchain, including rust-analyzer. To improve compilation
+times, configure [sccache][sccache] for use with Rust. Release recipes disable LTO so the
+mise-managed [mold][mold] linker can improve link times on Linux.
 
 [fluent]: https://projectfluent.org/
 [fluent-guide]: https://projectfluent.org/fluent/guide/hello.html
 [iso-codes]: https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes
 [just]: https://github.com/casey/just
+[mise]: https://mise.jdx.dev/
 [rustup]: https://rustup.rs/
 [rust-analyzer]: https://rust-analyzer.github.io/
 [mold]: https://github.com/rui314/mold

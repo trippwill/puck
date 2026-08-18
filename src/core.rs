@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Domain types for notes and dynamically structured records.
 //!
 //! Create a free-form note:

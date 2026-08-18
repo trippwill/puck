@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Ordered collections of structured records.
 
 use super::record::prelude::*;

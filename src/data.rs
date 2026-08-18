@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 #![allow(dead_code)]
 
 mod adapter;

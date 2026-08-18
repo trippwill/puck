@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 

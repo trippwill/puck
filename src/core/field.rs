@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Typed field definitions and record values.
 
 use std::marker::PhantomData;
