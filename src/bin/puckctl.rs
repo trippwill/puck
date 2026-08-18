@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
-use puck::core::{NoteId, PileNote};
-use puck::data::Document;
+use puck::core::prelude::*;
+use puck::data::prelude::*;
 use thiserror::Error;
 
 #[derive(Debug, Parser)]
@@ -110,12 +110,12 @@ async fn run(command: Commands) -> Result<(), CliError> {
                     let document = Document::open(file).await?;
                     let note = PileNote::create(body);
                     let id = note.id();
-                    document.add_note(note).await?;
+                    document.execute(vec![Command::AddNote(note)]).await?;
                     println!("{id}");
                 }
                 NoteCommands::List { file } => {
                     let document = Document::open(file).await?;
-                    for note in document.note_summaries().await? {
+                    for note in document.query(NoteSummaries).await? {
                         println!(
                             "{}\t{}\t{}\t{}",
                             note.id, note.revision, note.updated_at, note.preview
@@ -125,7 +125,7 @@ async fn run(command: Commands) -> Result<(), CliError> {
                 NoteCommands::Read { file, note } => {
                     let document = Document::open(file).await?;
                     let note = document
-                        .note(note)
+                        .query(NoteById(note))
                         .await?
                         .ok_or(CliError::NoteNotFound(note))?;
                     print!("{}", note.body());

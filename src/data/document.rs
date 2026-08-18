@@ -3,12 +3,14 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use thiserror::Error;
-use tokio_rusqlite::rusqlite::{OptionalExtension, params};
+use tokio_rusqlite::rusqlite::{self};
 use tokio_rusqlite::{Connection, OpenFlags};
 
-use super::adapter::prelude::*;
+use super::command::Command;
 use super::version::SchemaVersion;
-use crate::core::{NoteError, NoteId, NoteSummary, PileNote};
+use crate::core::NoteError;
+use crate::data::query::Query;
+
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"PUCK");
 const CURRENT_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 0);
 const MINIMUM_COMPATIBLE_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 0);
@@ -29,8 +31,8 @@ pub enum DocumentError {
     InvalidNote(#[from] NoteError),
 }
 
-impl From<tokio_rusqlite::rusqlite::Error> for DocumentError {
-    fn from(err: tokio_rusqlite::rusqlite::Error) -> Self {
+impl From<rusqlite::Error> for DocumentError {
+    fn from(err: rusqlite::Error) -> Self {
         DocumentError::SqliteError(err.into())
     }
 }
@@ -101,94 +103,36 @@ impl Document {
         connect(path, ConnectMode::Open).await
     }
 
-    /// Adds a pile note to the document.
+    /// Executes commands in a single transaction.
     ///
     /// # Errors
     ///
-    /// Returns an error if the note cannot be represented or inserted.
-    pub async fn add_note(&self, note: PileNote) -> Result<(), DocumentError> {
-        let id = *note.id().as_uuid();
-        let body = note.body().to_owned();
-        let revision = SqlU64(note.revision());
-        let created_at = note.created_at();
-        let updated_at = note.updated_at();
+    /// Returns an error if any command fails. No commands are persisted in that case.
+    pub async fn execute(&self, commands: Vec<Command>) -> Result<(), DocumentError> {
+        if commands.is_empty() {
+            return Ok(());
+        }
 
         self.conn
             .call(move |conn| {
                 let tx = conn.transaction()?;
-                tx.execute(
-                    r"
-                    INSERT INTO notes (id, body, revision, created_at, updated_at, archived)
-                    VALUES (?1, ?2, ?3, ?4, ?5, 0)
-                    ",
-                    params![id, body, revision, created_at, updated_at],
-                )?;
-                tx.commit()
+                for command in commands {
+                    command.execute(&tx)?;
+                }
+                tx.commit()?;
+                Ok(())
             })
-            .await?;
-
-        Ok(())
-    }
-
-    /// Returns pile-note summaries ordered by most recent update.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the query fails or persisted note data is invalid.
-    pub async fn note_summaries(&self) -> Result<Vec<NoteSummary>, DocumentError> {
-        let stored: Vec<StoredNote> = self
-            .conn
-            .call(|conn| {
-                let mut statement = conn.prepare(
-                    r"
-                    SELECT id, body, revision, created_at, updated_at
-                    FROM notes
-                    WHERE archived = 0
-                    ORDER BY updated_at DESC, id DESC
-                    ",
-                )?;
-                statement.query_map([], StoredNote::read)?.collect()
-            })
-            .await?;
-
-        stored
-            .into_iter()
-            .map(|stored| {
-                stored
-                    .into_note()
-                    .map(|note| NoteSummary::from(&note))
-                    .map_err(Into::into)
-            })
-            .collect()
-    }
-
-    /// Returns a pile note by ID.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the query fails or persisted note data is invalid.
-    pub async fn note(&self, id: NoteId) -> Result<Option<PileNote>, DocumentError> {
-        let id = *id.as_uuid();
-        let stored = self
-            .conn
-            .call(move |conn| {
-                conn.query_row(
-                    r"
-                    SELECT id, body, revision, created_at, updated_at
-                    FROM notes
-                    WHERE id = ?1 AND archived = 0
-                    ",
-                    [id],
-                    StoredNote::read,
-                )
-                .optional()
-            })
-            .await?;
-
-        stored
-            .map(StoredNote::into_note)
-            .transpose()
+            .await
             .map_err(Into::into)
+    }
+
+    /// Runs a typed query.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query or persisted-data validation fails.
+    pub async fn query<Q: Query>(&self, query: Q) -> Result<Q::Output, DocumentError> {
+        self.conn.call_raw(|conn| query.run(conn)).await?
     }
 
     #[must_use]
@@ -321,8 +265,12 @@ mod tests {
     use std::path::Path;
 
     use time::OffsetDateTime;
+    use tokio_rusqlite::params;
 
     use super::*;
+    use crate::core::prelude::*;
+    use crate::data::adapter::SqlU64;
+    use crate::data::query::{NoteById, NoteSummaries};
 
     #[test]
     fn invalid_application_id_is_rejected() {
@@ -401,14 +349,19 @@ mod tests {
         let older_id = older.id();
         let newer_id = newer.id();
 
-        document.add_note(older.clone()).await.unwrap();
-        document.add_note(newer.clone()).await.unwrap();
+        document
+            .execute(vec![
+                Command::AddNote(older.clone()),
+                Command::AddNote(newer.clone()),
+            ])
+            .await
+            .unwrap();
 
-        let stored = document.note(older_id).await.unwrap().unwrap();
+        let stored = document.query(NoteById(older_id)).await.unwrap().unwrap();
         assert_eq!(stored, older);
-        assert_eq!(document.note(NoteId::new()).await.unwrap(), None);
+        assert_eq!(document.query(NoteById(NoteId::new())).await.unwrap(), None);
 
-        let summaries = document.note_summaries().await.unwrap();
+        let summaries = document.query(NoteSummaries).await.unwrap();
         assert_eq!(
             summaries
                 .iter()
@@ -454,6 +407,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn commands_roll_back_as_one_transaction() {
+        let path = std::env::temp_dir().join(format!("puck-{}.db", uuid::Uuid::now_v7()));
+        let document = Document::create(&path).await.unwrap();
+        let note = PileNote::create("Duplicate");
+        let id = note.id();
+
+        assert!(
+            document
+                .execute(vec![Command::AddNote(note.clone()), Command::AddNote(note),])
+                .await
+                .is_err()
+        );
+        assert_eq!(document.query(NoteById(id)).await.unwrap(), None);
+
+        drop(document);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
     async fn open_document_has_exclusive_access() {
         let path = std::env::temp_dir().join(format!("puck-{}.db", uuid::Uuid::now_v7()));
         let document = Document::create(&path).await.unwrap();
@@ -489,7 +461,7 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            document.note(NoteId::restore(id)).await,
+            document.query(NoteById(NoteId::restore(id))).await,
             Err(DocumentError::InvalidNote(NoteError::InvalidRevision))
         ));
 

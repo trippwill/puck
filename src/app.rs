@@ -11,7 +11,7 @@ use cosmic::widget::about::About;
 use cosmic::widget::{self, menu};
 
 use crate::core::{NoteId, NoteSummary, PileNote};
-use crate::data::Document;
+use crate::data::prelude::*;
 use crate::fl;
 
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
@@ -287,7 +287,10 @@ impl cosmic::Application for AppModel {
                 return cosmic::task::future(async move {
                     Message::NoteLoaded(
                         id,
-                        document.note(id).await.map_err(|error| error.to_string()),
+                        document
+                            .query(NoteById(id))
+                            .await
+                            .map_err(|error| error.to_string()),
                     )
                 });
             }
@@ -315,7 +318,7 @@ impl cosmic::Application for AppModel {
 
                 return cosmic::task::future(async move {
                     let result = document
-                        .add_note(note.clone())
+                        .execute(vec![Command::AddNote(note.clone())])
                         .await
                         .map(|()| note)
                         .map_err(|error| error.to_string());
@@ -463,7 +466,7 @@ fn load_summaries(document: Document) -> Task<cosmic::Action<Message>> {
     cosmic::task::future(async move {
         Message::SummariesLoaded(
             document
-                .note_summaries()
+                .query(NoteSummaries)
                 .await
                 .map_err(|error| error.to_string()),
         )

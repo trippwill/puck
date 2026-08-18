@@ -47,12 +47,14 @@ macro_rules! uuidv7_id {
 }
 
 #[doc(inline)]
-pub use collection::prelude::*;
-#[doc(inline)]
-pub use field::prelude::*;
-#[doc(inline)]
-pub use note::prelude::*;
-#[doc(inline)]
-pub use record::prelude::*;
-#[doc(inline)]
 pub(crate) use uuidv7_id;
+
+#[doc(inline)]
+pub use self::prelude::*;
+
+pub mod prelude {
+    pub use super::super::core::collection::prelude::*;
+    pub use super::super::core::field::prelude::*;
+    pub use super::super::core::note::prelude::*;
+    pub use super::super::core::record::prelude::*;
+}

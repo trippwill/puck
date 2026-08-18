@@ -2,7 +2,10 @@ use thiserror::Error;
 use time::OffsetDateTime;
 
 pub mod prelude {
-    pub use super::{ArchiveNote, Note, NoteError, NoteId, NoteState, NoteSummary, Pile, PileNote};
+    pub use super::{
+        ArchiveNote, MAX_PREVIEW_CHARS, Note, NoteError, NoteId, NoteState, NoteSummary, Pile,
+        PileNote,
+    };
 }
 
 use crate::core::uuidv7_id;
