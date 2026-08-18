@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Embedded SQLite schema migrations.
+//! Embedded `SQLite` schema migrations.
 //!
 //! New documents replay the full ordered registry, while existing documents
 //! apply only entries newer than their `PRAGMA user_version`. Schema changes
