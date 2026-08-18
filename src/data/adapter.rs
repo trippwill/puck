@@ -1,15 +1,18 @@
-use tokio_rusqlite::ToSql;
+use time::OffsetDateTime;
 use tokio_rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, Value, ValueRef};
+use tokio_rusqlite::{Row, ToSql, rusqlite};
+
+use crate::core::{NoteError, NoteId, PileNote};
 
 pub mod prelude {
-    pub use super::SqlU64;
+    pub use super::{SqlU64, StoredNote};
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SqlU64(pub u64);
 
 impl ToSql for SqlU64 {
-    fn to_sql(&self) -> tokio_rusqlite::rusqlite::Result<ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::Owned(Value::Blob(
             self.0.to_be_bytes().to_vec(),
         )))
@@ -24,6 +27,36 @@ impl FromSql for SqlU64 {
             blob_size: blob.len(),
         })?;
         Ok(Self(u64::from_be_bytes(bytes)))
+    }
+}
+
+pub struct StoredNote {
+    id: uuid::Uuid,
+    body: String,
+    revision: SqlU64,
+    created_at: OffsetDateTime,
+    updated_at: OffsetDateTime,
+}
+
+impl StoredNote {
+    pub fn read(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            body: row.get("body")?,
+            revision: row.get("revision")?,
+            created_at: row.get("created_at")?,
+            updated_at: row.get("updated_at")?,
+        })
+    }
+
+    pub fn into_note(self) -> Result<PileNote, NoteError> {
+        PileNote::restore(
+            NoteId::restore(self.id),
+            self.body,
+            self.revision.0,
+            self.created_at,
+            self.updated_at,
+        )
     }
 }
 

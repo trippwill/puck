@@ -3,8 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use thiserror::Error;
-use time::OffsetDateTime;
-use tokio_rusqlite::rusqlite::{OptionalExtension, Row, params};
+use tokio_rusqlite::rusqlite::{OptionalExtension, params};
 use tokio_rusqlite::{Connection, OpenFlags};
 
 use super::adapter::prelude::*;
@@ -58,36 +57,6 @@ enum ConnectMode {
 struct DocumentHeader {
     application_id: i32,
     version: SchemaVersion,
-}
-
-struct StoredNote {
-    id: uuid::Uuid,
-    body: String,
-    revision: SqlU64,
-    created_at: OffsetDateTime,
-    updated_at: OffsetDateTime,
-}
-
-impl StoredNote {
-    fn read(row: &Row<'_>) -> tokio_rusqlite::rusqlite::Result<Self> {
-        Ok(Self {
-            id: row.get("id")?,
-            body: row.get("body")?,
-            revision: row.get("revision")?,
-            created_at: row.get("created_at")?,
-            updated_at: row.get("updated_at")?,
-        })
-    }
-
-    fn into_note(self) -> Result<PileNote, NoteError> {
-        PileNote::restore(
-            NoteId::restore(self.id),
-            self.body,
-            self.revision.0,
-            self.created_at,
-            self.updated_at,
-        )
-    }
 }
 
 impl Document {
@@ -343,13 +312,15 @@ fn validate_header(path: &Path, header: &DocumentHeader) -> Result<(), DocumentE
 
 impl Drop for Document {
     fn drop(&mut self) {
-        tracing::trace!("Closing document {:?}", self.path());
+        tracing::trace!("Releasing document {:?}", self.path());
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+
+    use time::OffsetDateTime;
 
     use super::*;
 
