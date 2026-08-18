@@ -51,6 +51,12 @@ struct NoteArgs {
 enum NoteCommands {
     /// Add a pile note.
     Add { file: PathBuf, body: String },
+    /// Edit a pile note.
+    Edit {
+        file: PathBuf,
+        note: NoteId,
+        body: String,
+    },
     /// List pile notes.
     List { file: PathBuf },
     /// Read a pile note.
@@ -61,6 +67,9 @@ enum NoteCommands {
 enum CliError {
     #[error(transparent)]
     Document(#[from] puck::data::DocumentError),
+
+    #[error(transparent)]
+    Note(#[from] NoteError),
 
     #[error("Note {0} not found")]
     NoteNotFound(NoteId),
@@ -114,6 +123,15 @@ async fn run(command: Commands) -> Result<(), CliError> {
                     let id = note.id();
                     document.execute(vec![Command::AddNote(note)]).await?;
                     println!("{id}");
+                }
+                NoteCommands::Edit { file, note, body } => {
+                    let document = Document::open(file).await?;
+                    let note = document
+                        .query(NoteById(note))
+                        .await?
+                        .ok_or(CliError::NoteNotFound(note))?
+                        .edit(body)?;
+                    document.execute(vec![Command::EditNote(note)]).await?;
                 }
                 NoteCommands::List { file } => {
                     let document = Document::open(file).await?;

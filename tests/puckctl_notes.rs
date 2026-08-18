@@ -65,6 +65,39 @@ fn notes_can_be_added_listed_and_read() {
     assert_eq!(read.stdout, b"alpha-01 is 192.168.1.10");
 
     assert!(
+        puckctl(&[
+            "document",
+            "note",
+            "edit",
+            path,
+            &first_id,
+            "alpha-01 moved to 192.168.1.11",
+        ])
+        .status
+        .success()
+    );
+
+    let read = puckctl(&["document", "note", "read", path, &first_id]);
+    assert!(read.status.success());
+    assert_eq!(read.stdout, b"alpha-01 moved to 192.168.1.11");
+
+    let list = puckctl(&["document", "note", "list", path]);
+    assert!(list.status.success());
+    let list = String::from_utf8(list.stdout).unwrap();
+    assert!(
+        list.lines()
+            .next()
+            .unwrap()
+            .starts_with(&format!("{first_id}\t2\t"))
+    );
+    assert!(
+        list.lines()
+            .next()
+            .unwrap()
+            .ends_with("\talpha-01 moved to 192.168.1.11")
+    );
+
+    assert!(
         !puckctl(&["document", "note", "read", path, "not-a-uuid"])
             .status
             .success()
@@ -76,6 +109,18 @@ fn notes_can_be_added_listed_and_read() {
             "read",
             path,
             &uuid::Uuid::now_v7().to_string(),
+        ])
+        .status
+        .success()
+    );
+    assert!(
+        !puckctl(&[
+            "document",
+            "note",
+            "edit",
+            path,
+            &uuid::Uuid::now_v7().to_string(),
+            "missing",
         ])
         .status
         .success()
