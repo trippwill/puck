@@ -9,13 +9,12 @@ use tokio_rusqlite::rusqlite::{self};
 use tokio_rusqlite::{Connection, OpenFlags};
 
 use super::command::Command;
+use super::migration::{self, CURRENT_VERSION, MINIMUM_COMPATIBLE_VERSION, MigrationError};
 use super::version::SchemaVersion;
 use crate::core::NoteError;
 use crate::data::query::Query;
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"PUCK");
-const CURRENT_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 0);
-const MINIMUM_COMPATIBLE_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 0);
 
 #[derive(Debug, Error)]
 pub enum DocumentError {
@@ -29,6 +28,10 @@ pub enum DocumentError {
     VersionError(PathBuf, SchemaVersion, SchemaVersion),
     #[error("Unsupported version for file {0}: maximum supported is {1}, found {2}")]
     UnsupportedVersion(PathBuf, SchemaVersion, SchemaVersion),
+    #[error("No migration path for file {0}: cannot upgrade from {1} to {2}")]
+    MigrationUnavailable(PathBuf, SchemaVersion, SchemaVersion),
+    #[error("Invalid embedded migration registry")]
+    InvalidMigrationRegistry,
     #[error("Invalid persisted note: {0}")]
     InvalidNote(#[from] NoteError),
 }
@@ -151,8 +154,9 @@ impl Document {
 async fn prepare_connection(
     conn: &Connection,
     kind: ConnectMode,
+    path: PathBuf,
 ) -> Result<DocumentHeader, DocumentError> {
-    conn.call(move |conn| {
+    conn.call_raw(move |conn| {
         conn.busy_timeout(Duration::from_secs(1))?;
         conn.execute_batch(
             r"
@@ -168,24 +172,7 @@ async fn prepare_connection(
         if let ConnectMode::Create = kind {
             let tx = conn.transaction()?;
             tx.pragma_update(None, "application_id", APPLICATION_ID)?;
-            tx.pragma_update(None, "user_version", i32::from(CURRENT_VERSION))?;
-            tx.execute_batch(
-                r"
-                CREATE TABLE notes (
-                    id BLOB PRIMARY KEY NOT NULL
-                        CHECK (typeof(id) = 'blob' AND length(id) = 16),
-                    body TEXT NOT NULL,
-                    revision INTEGER NOT NULL
-                        CHECK (
-                            typeof(revision) = 'integer'
-                            AND revision BETWEEN 1 AND 4294967295
-                        ),
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL CHECK (updated_at >= created_at),
-                    archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1))
-                ) STRICT;
-                ",
-            )?;
+            migration::initialize(&tx).map_err(|error| migration_error(&path, error))?;
             tx.commit()?;
         }
 
@@ -199,8 +186,7 @@ async fn prepare_connection(
             version: SchemaVersion::from_i32(user_version),
         })
     })
-    .await
-    .map_err(DocumentError::from)
+    .await?
 }
 
 async fn connect(path: impl AsRef<Path>, kind: ConnectMode) -> Result<Document, DocumentError> {
@@ -212,23 +198,58 @@ async fn connect(path: impl AsRef<Path>, kind: ConnectMode) -> Result<Document, 
         }
     };
 
-    let header = prepare_connection(&conn, kind).await?;
+    let header = prepare_connection(&conn, kind, path.clone()).await?;
     if let Err(error) = validate_header(&path, &header) {
-        if let Err(close_error) = conn.close().await {
-            tracing::warn!(
-                path = ?path,
-                error = %close_error,
-                "failed to close rejected document"
-            );
-        }
-        return Err(error);
+        return Err(close_rejected(conn, &path, error).await);
     }
+
+    let version = if let ConnectMode::Open = kind {
+        match migrate_connection(&conn, &path, header.version).await {
+            Ok(version) => version,
+            Err(error) => return Err(close_rejected(conn, &path, error).await),
+        }
+    } else {
+        header.version
+    };
 
     Ok(Document {
         path,
         conn,
-        version: header.version,
+        version,
     })
+}
+
+async fn migrate_connection(
+    conn: &Connection,
+    path: &Path,
+    from: SchemaVersion,
+) -> Result<SchemaVersion, DocumentError> {
+    let path = path.to_path_buf();
+    conn.call_raw(move |conn| {
+        migration::migrate(conn, from).map_err(|error| migration_error(&path, error))
+    })
+    .await?
+}
+
+fn migration_error(path: &Path, error: MigrationError) -> DocumentError {
+    match error {
+        MigrationError::InvalidRegistry => DocumentError::InvalidMigrationRegistry,
+        MigrationError::Sqlite(error) => error.into(),
+        MigrationError::UnregisteredVersion(version) => {
+            DocumentError::MigrationUnavailable(path.to_path_buf(), version, CURRENT_VERSION)
+        }
+    }
+}
+
+async fn close_rejected(conn: Connection, path: &Path, error: DocumentError) -> DocumentError {
+    if let Err(close_error) = conn.close().await {
+        tracing::warn!(
+            path = ?path,
+            error = %close_error,
+            "failed to close rejected document"
+        );
+    }
+    error
 }
 
 fn validate_header(path: &Path, header: &DocumentHeader) -> Result<(), DocumentError> {
@@ -328,6 +349,33 @@ mod tests {
 
         assert_eq!(application_id, APPLICATION_ID);
         assert_eq!(SchemaVersion::from_i32(user_version), CURRENT_VERSION);
+        drop(document);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn current_document_reopens_without_rerunning_baseline() {
+        let path = std::env::temp_dir().join(format!("puck-{}.db", uuid::Uuid::now_v7()));
+        let document = Document::create(&path).await.unwrap();
+        let note = PileNote::create("Keep me");
+        let id = note.id();
+        document
+            .execute(vec![Command::AddNote(note.clone())])
+            .await
+            .unwrap();
+        drop(document);
+
+        let document = Document::open(&path).await.unwrap();
+        assert_eq!(document.version(), CURRENT_VERSION);
+        assert_eq!(document.query(NoteById(id)).await.unwrap(), Some(note));
+
+        let user_version = document
+            .conn
+            .call(|conn| conn.pragma_query_value(None, "user_version", |row| row.get::<_, i32>(0)))
+            .await
+            .unwrap();
+        assert_eq!(SchemaVersion::from_i32(user_version), CURRENT_VERSION);
+
         drop(document);
         std::fs::remove_file(path).unwrap();
     }

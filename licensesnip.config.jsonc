@@ -3,6 +3,10 @@
     "rs": {
       "before_line": "// ",
       "skip_shebang_line": false
+    },
+    "sql": {
+      "before_line": "-- ",
+      "skip_shebang_line": false
     }
   }
 }

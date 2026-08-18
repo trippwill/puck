@@ -5,6 +5,7 @@
 mod adapter;
 mod command;
 mod document;
+mod migration;
 mod query;
 mod version;
 
