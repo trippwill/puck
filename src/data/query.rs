@@ -7,7 +7,7 @@ use super::document::DocumentError;
 use crate::core::prelude::*;
 
 pub mod prelude {
-    pub use super::{ArchivedNoteById, ArchivedNoteSummaries, NoteById, NoteSummaries};
+    pub use super::{ArchivedNoteById, ArchivedNoteSummaries, NoteById, NoteSearch, NoteSummaries};
 }
 
 pub trait Query: Send + 'static {
@@ -63,6 +63,40 @@ impl Query for NoteSummaries {
 
     fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
         stored_notes(conn, false)?
+            .into_iter()
+            .map(|stored| {
+                stored
+                    .into_note()
+                    .map(|note| NoteSummary::from(&note))
+                    .map_err(Into::into)
+            })
+            .collect()
+    }
+}
+
+/// Returns active note summaries whose bodies contain a literal string.
+///
+/// # Errors
+///
+/// Returns an error if the query or persisted-data validation fails.
+pub struct NoteSearch(pub String);
+impl Query for NoteSearch {
+    type Output = Vec<NoteSummary>;
+
+    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
+        let mut statement = conn.prepare(
+            r"
+            SELECT id, body, revision, created_at, updated_at
+            FROM notes
+            WHERE archived = 0 AND instr(body, ?1) > 0
+            ORDER BY updated_at DESC, id DESC
+            ",
+        )?;
+        let stored = statement
+            .query_map([self.0], StoredNote::read)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        stored
             .into_iter()
             .map(|stored| {
                 stored

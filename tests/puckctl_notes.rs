@@ -205,3 +205,48 @@ fn notes_can_be_managed() {
         .success()
     );
 }
+
+#[test]
+fn active_notes_can_be_searched() {
+    let document = TestDocument::new();
+    let path = document.path().to_str().unwrap();
+
+    assert!(puckctl(&["document", "new", path]).status.success());
+    assert!(
+        puckctl(&["document", "note", "add", path, "Unrelated"])
+            .status
+            .success()
+    );
+    let matching = puckctl(&[
+        "document",
+        "note",
+        "add",
+        path,
+        "Router\nFind alpha-01, café, 🦀 here.",
+    ]);
+    assert!(matching.status.success());
+    let matching_id = String::from_utf8(matching.stdout)
+        .unwrap()
+        .trim()
+        .to_owned();
+
+    let search = puckctl(&["document", "note", "search", path, "alpha-01, café, 🦀"]);
+    assert!(search.status.success());
+    let search = String::from_utf8(search.stdout).unwrap();
+    assert_eq!(search.lines().count(), 1);
+    assert!(search.starts_with(&format!("{matching_id}\t1\t")));
+    assert!(search.trim_end().ends_with("\tRouter"));
+
+    let search = puckctl(&["document", "note", "search", path, "missing"]);
+    assert!(search.status.success());
+    assert!(search.stdout.is_empty());
+
+    assert!(
+        puckctl(&["document", "note", "archive", path, &matching_id])
+            .status
+            .success()
+    );
+    let search = puckctl(&["document", "note", "search", path, "alpha-01"]);
+    assert!(search.status.success());
+    assert!(search.stdout.is_empty());
+}

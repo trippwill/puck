@@ -74,6 +74,8 @@ enum NoteCommands {
         file: PathBuf,
         note: NoteId,
     },
+    /// Search active note bodies.
+    Search { file: PathBuf, text: String },
     /// Return an archived note to the active pile.
     Unarchive { file: PathBuf, note: NoteId },
 }
@@ -164,12 +166,7 @@ async fn run(command: Commands) -> Result<(), CliError> {
                     } else {
                         document.query(NoteSummaries).await?
                     };
-                    for note in notes {
-                        println!(
-                            "{}\t{}\t{}\t{}",
-                            note.id, note.revision, note.updated_at, note.preview
-                        );
-                    }
+                    print_summaries(notes);
                 }
                 NoteCommands::Read {
                     archived,
@@ -191,6 +188,10 @@ async fn run(command: Commands) -> Result<(), CliError> {
                         print!("{}", note.body());
                     }
                 }
+                NoteCommands::Search { file, text } => {
+                    let document = Document::open(file).await?;
+                    print_summaries(document.query(NoteSearch(text)).await?);
+                }
                 NoteCommands::Unarchive { file, note } => {
                     let document = Document::open(file).await?;
                     let note = document
@@ -205,4 +206,13 @@ async fn run(command: Commands) -> Result<(), CliError> {
     }
 
     Ok(())
+}
+
+fn print_summaries(notes: Vec<NoteSummary>) {
+    for note in notes {
+        println!(
+            "{}\t{}\t{}\t{}",
+            note.id, note.revision, note.updated_at, note.preview
+        );
+    }
 }
