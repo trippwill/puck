@@ -3,7 +3,14 @@ use time::OffsetDateTime;
 
 pub mod prelude {
     pub use super::{
-        ArchiveNote, MAX_PREVIEW_CHARS, Note, NoteError, NoteId, NoteState, NoteSummary, Pile,
+        ArchiveNote,
+        MAX_PREVIEW_CHARS,
+        Note,
+        NoteError,
+        NoteId,
+        NoteState,
+        NoteSummary,
+        Pile,
         PileNote,
     };
 }

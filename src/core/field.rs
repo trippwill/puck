@@ -9,8 +9,20 @@ mod sealed {
 
 pub mod prelude {
     pub use super::{
-        AnyField, AnyFieldConvert, AnyFieldDef, AnyFieldDefConvert, Boolean, Date, Field, FieldDef,
-        FieldDefId, FieldType, Integer, Text, Time, Timestamp,
+        AnyField,
+        AnyFieldConvert,
+        AnyFieldDef,
+        AnyFieldDefConvert,
+        Boolean,
+        Date,
+        Field,
+        FieldDef,
+        FieldDefId,
+        FieldType,
+        Integer,
+        Text,
+        Time,
+        Timestamp,
     };
 }
 
