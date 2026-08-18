@@ -65,7 +65,7 @@ pub type ArchiveNote = Note<Archive>;
 pub struct Note<T: NoteState> {
     id: NoteId,
     body: String,
-    revision: u64,
+    revision: u32,
     created_at: OffsetDateTime,
     updated_at: OffsetDateTime,
     _marker: std::marker::PhantomData<T>,
@@ -159,7 +159,7 @@ impl<T: NoteState> Note<T> {
     pub(crate) fn restore(
         id: NoteId,
         body: String,
-        revision: u64,
+        revision: u32,
         created_at: OffsetDateTime,
         updated_at: OffsetDateTime,
     ) -> Result<Self, NoteError> {
@@ -193,7 +193,7 @@ impl<T: NoteState> Note<T> {
 
     /// Returns the revision number.
     #[must_use]
-    pub fn revision(&self) -> u64 {
+    pub fn revision(&self) -> u32 {
         self.revision
     }
 
@@ -218,7 +218,7 @@ pub struct NoteSummary {
     /// The first line, truncated to [`MAX_PREVIEW_CHARS`] characters.
     pub preview: String,
     /// The source note revision.
-    pub revision: u64,
+    pub revision: u32,
     /// The source note's update timestamp.
     pub updated_at: OffsetDateTime,
 }
@@ -260,7 +260,7 @@ mod tests {
     fn edit_revision_overflow_should_return_error() {
         let note = Note::create("Initial body");
         let mut updated_note = note.clone();
-        updated_note.revision = u64::MAX;
+        updated_note.revision = u32::MAX;
         let result = updated_note.edit("Updated body");
         assert!(matches!(result, Err(NoteError::RevisionOverflow)));
     }
@@ -335,7 +335,7 @@ mod tests {
     fn recover_revision_overflow_resets_revision() {
         let note = Note::create("Some body");
         let mut overflowed_note = note.clone();
-        overflowed_note.revision = u64::MAX;
+        overflowed_note.revision = u32::MAX;
         let recovered_note = overflowed_note.recover_revision_overflow();
         assert_ne!(recovered_note.id(), overflowed_note.id());
         assert_eq!(recovered_note.revision(), 1);

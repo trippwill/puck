@@ -173,11 +173,10 @@ async fn prepare_connection(
                     id BLOB PRIMARY KEY NOT NULL
                         CHECK (typeof(id) = 'blob' AND length(id) = 16),
                     body TEXT NOT NULL,
-                    revision BLOB NOT NULL
+                    revision INTEGER NOT NULL
                         CHECK (
-                            typeof(revision) = 'blob'
-                            AND length(revision) = 8
-                            AND revision != x'0000000000000000'
+                            typeof(revision) = 'integer'
+                            AND revision BETWEEN 1 AND 4294967295
                         ),
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL CHECK (updated_at >= created_at),
@@ -269,7 +268,6 @@ mod tests {
 
     use super::*;
     use crate::core::prelude::*;
-    use crate::data::adapter::SqlU64;
     use crate::data::query::{NoteById, NoteSummaries};
 
     #[test]
@@ -340,7 +338,7 @@ mod tests {
         let older = PileNote::restore(
             NoteId::new(),
             String::from("Older\nsecond line"),
-            u64::MAX,
+            u32::MAX,
             now - time::Duration::SECOND,
             now - time::Duration::SECOND,
         )
@@ -385,7 +383,7 @@ mod tests {
                         Ok((
                             row.get::<_, uuid::Uuid>(0)?,
                             row.get::<_, String>(1)?,
-                            row.get::<_, Vec<u8>>(2)?,
+                            row.get::<_, u32>(2)?,
                             row.get::<_, OffsetDateTime>(3)?,
                             row.get::<_, OffsetDateTime>(4)?,
                             row.get::<_, i64>(5)?,
@@ -397,7 +395,7 @@ mod tests {
             .unwrap();
         assert_eq!(row.0, *older_id.as_uuid());
         assert_eq!(row.1, older.body());
-        assert_eq!(row.2, older.revision().to_be_bytes());
+        assert_eq!(row.2, older.revision());
         assert_eq!(row.3, older.created_at());
         assert_eq!(row.4, older.updated_at());
         assert_eq!(row.5, 0);
@@ -453,7 +451,7 @@ mod tests {
                     INSERT INTO notes (id, body, revision, created_at, updated_at, archived)
                     VALUES (?1, 'Invalid', ?2, ?3, ?3, 0)
                     ",
-                    params![id, SqlU64(0), now],
+                    params![id, 0_u32, now],
                 )?;
                 Ok::<(), tokio_rusqlite::rusqlite::Error>(())
             })

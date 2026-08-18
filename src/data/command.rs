@@ -1,7 +1,6 @@
 use rusqlite::params;
 use tokio_rusqlite::rusqlite;
 
-use super::adapter::prelude::*;
 use crate::core::prelude::*;
 
 /// A command to be executed on the document.
@@ -27,7 +26,7 @@ impl Command {
             params![
                 *note.id().as_uuid(),
                 note.body().to_owned(),
-                SqlU64(note.revision()),
+                note.revision(),
                 note.created_at(),
                 note.updated_at()
             ],
