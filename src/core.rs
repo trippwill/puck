@@ -1,5 +1,30 @@
+//! Domain types for notes and dynamically structured records.
+//!
+//! Create a free-form note:
+//!
+//! ```
+//! use puck::core::PileNote;
+//!
+//! let note = PileNote::create("alpha-01 is 192.168.1.10");
+//! assert_eq!(note.revision(), 1);
+//! ```
+//!
+//! Create a record with a typed field:
+//!
+//! ```
+//! use puck::core::{Collection, FieldType, Text};
+//!
+//! let hosts = Collection::new("Hosts");
+//! let hostname = Text::def("Hostname");
+//! let host = hosts.new_record();
+//! let field = host.new_field(&hostname, String::from("alpha-01"));
+//!
+//! assert_eq!(field.val(), "alpha-01");
+//! ```
+
 // TODO: Remove
 #![allow(dead_code)]
+#![deny(missing_docs)]
 
 mod collection;
 mod field;
@@ -7,8 +32,8 @@ mod note;
 mod record;
 
 macro_rules! uuidv7_id {
-    ($name:ident) => {
-        #[doc = concat!("A UUID v7-backed `", stringify!($name), "`.")]
+    ($name:ident, $doc:literal) => {
+        #[doc = $doc]
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub struct $name(uuid::Uuid);
 
@@ -52,6 +77,7 @@ pub(crate) use uuidv7_id;
 #[doc(inline)]
 pub use self::prelude::*;
 
+/// Commonly used domain types.
 pub mod prelude {
     pub use super::super::core::collection::prelude::*;
     pub use super::super::core::field::prelude::*;

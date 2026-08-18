@@ -1,3 +1,5 @@
+//! Typed field definitions and record values.
+
 use std::marker::PhantomData;
 
 use super::record::prelude::*;
@@ -7,12 +9,11 @@ mod sealed {
     pub trait Sealed {}
 }
 
+/// Field types.
 pub mod prelude {
     pub use super::{
         AnyField,
-        AnyFieldConvert,
         AnyFieldDef,
-        AnyFieldDefConvert,
         Boolean,
         Date,
         Field,
@@ -26,12 +27,12 @@ pub mod prelude {
     };
 }
 
-uuidv7_id!(FieldDefId);
+uuidv7_id!(FieldDefId, "A unique field-definition identifier.");
 
 /// A built-in field type and its Rust value type.
-pub trait FieldType: self::sealed::Sealed + Sized + Clone {
+pub trait FieldType: self::sealed::Sealed + Sized {
     /// The Rust value type for this field type.
-    type Value: Clone;
+    type Value;
 
     /// Creates a typed field definition with a new ID.
     #[must_use]
@@ -45,26 +46,26 @@ pub trait FieldType: self::sealed::Sealed + Sized + Clone {
 }
 
 /// Text stored as a [`String`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug)]
 pub struct Text;
 /// A Boolean value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug)]
 pub struct Boolean;
 /// A signed 64-bit integer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug)]
 pub struct Integer;
 /// A calendar date without a time or offset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug)]
 pub struct Date;
 /// A wall-clock time without a date or offset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug)]
 pub struct Time;
 /// A unix epoch timestamp in seconds and nanoseconds since 1970-01-01T00:00:00Z.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug)]
 pub struct Timestamp;
 
-/// A typed field definition and its associated value.
-#[derive(Debug, Clone)]
+/// A typed value belonging to a record and field definition.
+#[derive(Debug)]
 pub struct Field<T: FieldType> {
     def_id: FieldDefId,
     record_id: RecordId,
@@ -108,7 +109,7 @@ impl<T: FieldType> Field<T> {
 }
 
 /// A definition that supports values of field type `T`.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FieldDef<T: FieldType> {
     id: FieldDefId,
     name: Box<str>,
@@ -144,24 +145,36 @@ impl<T: FieldType> FieldDef<T> {
 }
 
 /// A field value of any supported type.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum AnyField {
+    /// A text value.
     Text(Field<Text>),
+    /// A Boolean value.
     Boolean(Field<Boolean>),
+    /// A signed integer value.
     Integer(Field<Integer>),
+    /// A calendar date.
     Date(Field<Date>),
+    /// A wall-clock time.
     Time(Field<Time>),
+    /// A Unix timestamp.
     Timestamp(Field<Timestamp>),
 }
 
 /// A field definition of any supported type.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum AnyFieldDef {
+    /// A text definition.
     Text(FieldDef<Text>),
+    /// A Boolean definition.
     Boolean(FieldDef<Boolean>),
+    /// A signed integer definition.
     Integer(FieldDef<Integer>),
+    /// A definition for calendar dates.
     Date(FieldDef<Date>),
+    /// A definition for wall-clock times.
     Time(FieldDef<Time>),
+    /// A definition for Unix timestamps.
     Timestamp(FieldDef<Timestamp>),
 }
 
@@ -191,171 +204,8 @@ impl FieldType for Timestamp {
     type Value = time::Timestamp;
 }
 
-pub trait AnyFieldConvert {
-    fn into(self) -> AnyField;
-    fn from(field: &AnyField) -> Option<&Self>
-    where
-        Self: Sized;
-}
-
-pub trait AnyFieldDefConvert {
-    fn into(self) -> AnyFieldDef;
-    fn from(field: &AnyFieldDef) -> Option<&Self>
-    where
-        Self: Sized;
-}
-
-impl AnyFieldConvert for Field<Text> {
-    fn into(self) -> AnyField {
-        AnyField::Text(self)
-    }
-
-    fn from(field: &AnyField) -> Option<&Self> {
-        match field {
-            AnyField::Text(f) => Some(f),
-            _ => None,
-        }
-    }
-}
-impl AnyFieldConvert for Field<Boolean> {
-    fn into(self) -> AnyField {
-        AnyField::Boolean(self)
-    }
-
-    fn from(field: &AnyField) -> Option<&Self> {
-        match field {
-            AnyField::Boolean(f) => Some(f),
-            _ => None,
-        }
-    }
-}
-impl AnyFieldConvert for Field<Integer> {
-    fn into(self) -> AnyField {
-        AnyField::Integer(self)
-    }
-
-    fn from(field: &AnyField) -> Option<&Self> {
-        match field {
-            AnyField::Integer(f) => Some(f),
-            _ => None,
-        }
-    }
-}
-impl AnyFieldConvert for Field<Date> {
-    fn into(self) -> AnyField {
-        AnyField::Date(self)
-    }
-
-    fn from(field: &AnyField) -> Option<&Self> {
-        match field {
-            AnyField::Date(f) => Some(f),
-            _ => None,
-        }
-    }
-}
-impl AnyFieldConvert for Field<Time> {
-    fn into(self) -> AnyField {
-        AnyField::Time(self)
-    }
-
-    fn from(field: &AnyField) -> Option<&Self> {
-        match field {
-            AnyField::Time(f) => Some(f),
-            _ => None,
-        }
-    }
-}
-impl AnyFieldConvert for Field<Timestamp> {
-    fn into(self) -> AnyField {
-        AnyField::Timestamp(self)
-    }
-
-    fn from(field: &AnyField) -> Option<&Self> {
-        match field {
-            AnyField::Timestamp(f) => Some(f),
-            _ => None,
-        }
-    }
-}
-
-impl AnyFieldDefConvert for FieldDef<Text> {
-    fn into(self) -> AnyFieldDef {
-        AnyFieldDef::Text(self)
-    }
-
-    fn from(field: &AnyFieldDef) -> Option<&Self> {
-        match field {
-            AnyFieldDef::Text(f) => Some(f),
-            _ => None,
-        }
-    }
-}
-impl AnyFieldDefConvert for FieldDef<Boolean> {
-    fn into(self) -> AnyFieldDef {
-        AnyFieldDef::Boolean(self)
-    }
-
-    fn from(field: &AnyFieldDef) -> Option<&Self> {
-        match field {
-            AnyFieldDef::Boolean(f) => Some(f),
-            _ => None,
-        }
-    }
-}
-impl AnyFieldDefConvert for FieldDef<Integer> {
-    fn into(self) -> AnyFieldDef {
-        AnyFieldDef::Integer(self)
-    }
-
-    fn from(field: &AnyFieldDef) -> Option<&Self> {
-        match field {
-            AnyFieldDef::Integer(f) => Some(f),
-            _ => None,
-        }
-    }
-}
-impl AnyFieldDefConvert for FieldDef<Date> {
-    fn into(self) -> AnyFieldDef {
-        AnyFieldDef::Date(self)
-    }
-
-    fn from(field: &AnyFieldDef) -> Option<&Self> {
-        match field {
-            AnyFieldDef::Date(f) => Some(f),
-            _ => None,
-        }
-    }
-}
-impl AnyFieldDefConvert for FieldDef<Time> {
-    fn into(self) -> AnyFieldDef {
-        AnyFieldDef::Time(self)
-    }
-
-    fn from(field: &AnyFieldDef) -> Option<&Self> {
-        match field {
-            AnyFieldDef::Time(f) => Some(f),
-            _ => None,
-        }
-    }
-}
-impl AnyFieldDefConvert for FieldDef<Timestamp> {
-    fn into(self) -> AnyFieldDef {
-        AnyFieldDef::Timestamp(self)
-    }
-
-    fn from(field: &AnyFieldDef) -> Option<&Self> {
-        match field {
-            AnyFieldDef::Timestamp(f) => Some(f),
-            _ => None,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use time::Month;
-    use time::macros::timestamp;
-
     use super::*;
     use crate::core::Collection;
 
@@ -384,34 +234,5 @@ mod tests {
         assert_eq!(field.def_id(), def_id);
         assert_eq!(field.record_id(), record.id());
         assert_eq!(field.val(), "alpha-01");
-    }
-
-    #[test]
-    fn all_field_types_erase_and_recover() {
-        let collection = Collection::new("Values");
-        let record = collection.new_record();
-        let date = time::Date::from_calendar_date(2026, Month::August, 17).unwrap();
-        let time = time::Time::from_hms(21, 55, 0).unwrap();
-
-        macro_rules! check {
-            ($field_type:ty, $value:expr, $variant:ident) => {{
-                let def = <$field_type as FieldType>::def(stringify!($variant));
-                let erased_def = <FieldDef<$field_type> as AnyFieldDefConvert>::into(def.clone());
-                assert!(matches!(erased_def, AnyFieldDef::$variant(_)));
-                assert!(<FieldDef<$field_type> as AnyFieldDefConvert>::from(&erased_def).is_some());
-
-                let erased =
-                    <Field<$field_type> as AnyFieldConvert>::into(record.new_field(&def, $value));
-                assert!(matches!(erased, AnyField::$variant(_)));
-                assert!(<Field<$field_type> as AnyFieldConvert>::from(&erased).is_some());
-            }};
-        }
-
-        check!(Text, String::from("alpha-01"), Text);
-        check!(Boolean, true, Boolean);
-        check!(Integer, 3, Integer);
-        check!(Date, date, Date);
-        check!(Time, time, Time);
-        check!(Timestamp, timestamp!(1_787_001_300), Timestamp);
     }
 }

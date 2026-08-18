@@ -1,13 +1,17 @@
+//! Ordered collections of structured records.
+
 use super::record::prelude::*;
 use crate::core::uuidv7_id;
+
+/// Collection types.
 pub mod prelude {
     pub use super::{Collection, CollectionId};
 }
 
-uuidv7_id!(CollectionId);
+uuidv7_id!(CollectionId, "A unique collection identifier.");
 
 /// An ordered set of records.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Collection {
     id: CollectionId,
     name: Box<str>,

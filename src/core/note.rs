@@ -1,8 +1,12 @@
+//! Immutable revisions of free-form notes.
+
 use thiserror::Error;
 use time::OffsetDateTime;
 
+/// Note types.
 pub mod prelude {
     pub use super::{
+        Archive,
         ArchiveNote,
         MAX_PREVIEW_CHARS,
         Note,
@@ -20,7 +24,7 @@ use crate::core::uuidv7_id;
 /// The maximum number of characters in a pile-note preview.
 pub const MAX_PREVIEW_CHARS: usize = 72;
 
-uuidv7_id!(NoteId);
+uuidv7_id!(NoteId, "A unique note identifier.");
 
 impl std::str::FromStr for NoteId {
     type Err = uuid::Error;
@@ -50,11 +54,15 @@ mod sealed {
     pub trait Sealed {}
 }
 
+/// A note available in the active pile.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pile;
+
+/// A note retained outside the active pile.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Archive;
 
+/// A sealed lifecycle state for a note.
 pub trait NoteState: self::sealed::Sealed + Clone + PartialEq + Eq {}
 
 impl NoteState for Pile {}
@@ -115,6 +123,7 @@ impl Note<Pile> {
         })
     }
 
+    /// Recovers an uneditable note as a new identity at revision one.
     #[must_use]
     pub fn recover_revision_overflow(&self) -> Self {
         let updated_at = OffsetDateTime::now_utc();
@@ -128,8 +137,9 @@ impl Note<Pile> {
         }
     }
 
+    /// Moves the note out of the active pile.
     #[must_use]
-    pub fn archive(self) -> Note<Archive> {
+    pub fn archive(self) -> ArchiveNote {
         Note {
             id: self.id,
             body: self.body.clone(),
@@ -142,8 +152,9 @@ impl Note<Pile> {
 }
 
 impl Note<Archive> {
+    /// Returns the note to the active pile.
     #[must_use]
-    pub fn unarchive(self) -> Note<Pile> {
+    pub fn unarchive(self) -> PileNote {
         Note {
             id: self.id,
             body: self.body.clone(),

@@ -1,15 +1,18 @@
+//! Structured records belonging to collections.
+
 use super::collection::prelude::*;
 use super::field::prelude::*;
 use super::uuidv7_id;
 
+/// Record types.
 pub mod prelude {
     pub use super::{Record, RecordId};
 }
 
-uuidv7_id!(RecordId);
+uuidv7_id!(RecordId, "A unique record identifier.");
 
-/// A record is a set of field values, each associated with a field definition ID.
-#[derive(Debug, Clone)]
+/// A set of field values owned by a collection.
+#[derive(Debug)]
 pub struct Record {
     collection_id: CollectionId,
     id: RecordId,
