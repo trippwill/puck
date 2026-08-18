@@ -3,7 +3,7 @@
 use time::OffsetDateTime;
 use tokio_rusqlite::{Row, rusqlite};
 
-use crate::core::{NoteError, NoteId, PileNote};
+use crate::core::{ArchiveNote, NoteError, NoteId, PileNote};
 
 pub mod prelude {
     pub use super::StoredNote;
@@ -30,6 +30,16 @@ impl StoredNote {
 
     pub fn into_note(self) -> Result<PileNote, NoteError> {
         PileNote::restore(
+            NoteId::restore(self.id),
+            self.body,
+            self.revision,
+            self.created_at,
+            self.updated_at,
+        )
+    }
+
+    pub fn into_archive_note(self) -> Result<ArchiveNote, NoteError> {
+        ArchiveNote::restore(
             NoteId::restore(self.id),
             self.body,
             self.revision,

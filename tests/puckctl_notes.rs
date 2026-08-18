@@ -29,7 +29,7 @@ fn puckctl(args: &[&str]) -> Output {
 }
 
 #[test]
-fn notes_can_be_added_listed_and_read() {
+fn notes_can_be_managed() {
     let document = TestDocument::new();
     let path = document.path().to_str().unwrap();
 
@@ -121,6 +121,47 @@ fn notes_can_be_added_listed_and_read() {
             path,
             &uuid::Uuid::now_v7().to_string(),
             "missing",
+        ])
+        .status
+        .success()
+    );
+
+    assert!(
+        puckctl(&["document", "note", "archive", path, &first_id])
+            .status
+            .success()
+    );
+    let list = String::from_utf8(puckctl(&["document", "note", "list", path]).stdout).unwrap();
+    assert!(!list.contains(&first_id));
+    assert!(
+        !puckctl(&["document", "note", "read", path, &first_id])
+            .status
+            .success()
+    );
+
+    let list = puckctl(&["document", "note", "list", "--archived", path]);
+    assert!(list.status.success());
+    let list = String::from_utf8(list.stdout).unwrap();
+    assert!(
+        list.lines()
+            .any(|line| line.starts_with(&format!("{first_id}\t2\t")))
+    );
+    let read = puckctl(&["document", "note", "read", "--archived", path, &first_id]);
+    assert!(read.status.success());
+    assert_eq!(read.stdout, b"alpha-01 moved to 192.168.1.11");
+
+    assert!(
+        !puckctl(&["document", "note", "archive", path, &first_id])
+            .status
+            .success()
+    );
+    assert!(
+        !puckctl(&[
+            "document",
+            "note",
+            "archive",
+            path,
+            &uuid::Uuid::now_v7().to_string(),
         ])
         .status
         .success()

@@ -51,6 +51,8 @@ struct NoteArgs {
 enum NoteCommands {
     /// Add a pile note.
     Add { file: PathBuf, body: String },
+    /// Archive a pile note.
+    Archive { file: PathBuf, note: NoteId },
     /// Edit a pile note.
     Edit {
         file: PathBuf,
@@ -58,9 +60,20 @@ enum NoteCommands {
         body: String,
     },
     /// List pile notes.
-    List { file: PathBuf },
+    List {
+        /// List archived notes instead.
+        #[arg(long)]
+        archived: bool,
+        file: PathBuf,
+    },
     /// Read a pile note.
-    Read { file: PathBuf, note: NoteId },
+    Read {
+        /// Read an archived note instead.
+        #[arg(long)]
+        archived: bool,
+        file: PathBuf,
+        note: NoteId,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -124,6 +137,15 @@ async fn run(command: Commands) -> Result<(), CliError> {
                     document.execute(vec![Command::AddNote(note)]).await?;
                     println!("{id}");
                 }
+                NoteCommands::Archive { file, note } => {
+                    let document = Document::open(file).await?;
+                    let note = document
+                        .query(NoteById(note))
+                        .await?
+                        .ok_or(CliError::NoteNotFound(note))?
+                        .archive();
+                    document.execute(vec![Command::ArchiveNote(note)]).await?;
+                }
                 NoteCommands::Edit { file, note, body } => {
                     let document = Document::open(file).await?;
                     let note = document
@@ -133,22 +155,39 @@ async fn run(command: Commands) -> Result<(), CliError> {
                         .edit(body)?;
                     document.execute(vec![Command::EditNote(note)]).await?;
                 }
-                NoteCommands::List { file } => {
+                NoteCommands::List { archived, file } => {
                     let document = Document::open(file).await?;
-                    for note in document.query(NoteSummaries).await? {
+                    let notes = if archived {
+                        document.query(ArchivedNoteSummaries).await?
+                    } else {
+                        document.query(NoteSummaries).await?
+                    };
+                    for note in notes {
                         println!(
                             "{}\t{}\t{}\t{}",
                             note.id, note.revision, note.updated_at, note.preview
                         );
                     }
                 }
-                NoteCommands::Read { file, note } => {
+                NoteCommands::Read {
+                    archived,
+                    file,
+                    note,
+                } => {
                     let document = Document::open(file).await?;
-                    let note = document
-                        .query(NoteById(note))
-                        .await?
-                        .ok_or(CliError::NoteNotFound(note))?;
-                    print!("{}", note.body());
+                    if archived {
+                        let note = document
+                            .query(ArchivedNoteById(note))
+                            .await?
+                            .ok_or(CliError::NoteNotFound(note))?;
+                        print!("{}", note.body());
+                    } else {
+                        let note = document
+                            .query(NoteById(note))
+                            .await?
+                            .ok_or(CliError::NoteNotFound(note))?;
+                        print!("{}", note.body());
+                    }
                 }
             },
         },
