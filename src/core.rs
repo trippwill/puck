@@ -26,8 +26,8 @@ macro_rules! uuidv7_id {
                 &self.0
             }
 
-            #[allow(dead_code)]
-            pub(crate) const fn from_parts(value: uuid::Uuid) -> Self {
+            #[must_use]
+            pub(crate) const fn restore(value: uuid::Uuid) -> Self {
                 Self(value)
             }
         }

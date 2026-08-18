@@ -16,7 +16,7 @@ impl std::str::FromStr for NoteId {
     type Err = uuid::Error;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        value.parse().map(Self::from_parts)
+        value.parse().map(Self::restore)
     }
 }
 

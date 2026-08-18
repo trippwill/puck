@@ -4,15 +4,12 @@ use std::time::Duration;
 
 use thiserror::Error;
 use time::OffsetDateTime;
-use tokio_rusqlite::rusqlite::types::{
-    FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, Value, ValueRef,
-};
 use tokio_rusqlite::rusqlite::{OptionalExtension, Row, params};
 use tokio_rusqlite::{Connection, OpenFlags};
 
+use super::adapter::prelude::*;
 use super::version::SchemaVersion;
 use crate::core::{NoteError, NoteId, NoteSummary, PileNote};
-
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"PUCK");
 const CURRENT_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 0);
 const MINIMUM_COMPATIBLE_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 0);
@@ -21,19 +18,14 @@ const MINIMUM_COMPATIBLE_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 0);
 pub enum DocumentError {
     #[error("SQLite error: {0}")]
     SqliteError(#[from] tokio_rusqlite::Error),
-
     #[error("Invalid file: {0}")]
     InvalidFile(PathBuf),
-
     #[error("I/O error: {0}")]
     IoError(#[from] std::io::Error),
-
     #[error("Version mismatch for file {0}: expected at least {1}, found {2}")]
     VersionError(PathBuf, SchemaVersion, SchemaVersion),
-
     #[error("Unsupported version for file {0}: maximum supported is {1}, found {2}")]
     UnsupportedVersion(PathBuf, SchemaVersion, SchemaVersion),
-
     #[error("Invalid persisted note: {0}")]
     InvalidNote(#[from] NoteError),
 }
@@ -76,27 +68,6 @@ struct StoredNote {
     updated_at: OffsetDateTime,
 }
 
-struct SqlU64(u64);
-
-impl ToSql for SqlU64 {
-    fn to_sql(&self) -> tokio_rusqlite::rusqlite::Result<ToSqlOutput<'_>> {
-        Ok(ToSqlOutput::Owned(Value::Blob(
-            self.0.to_be_bytes().to_vec(),
-        )))
-    }
-}
-
-impl FromSql for SqlU64 {
-    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
-        let blob = value.as_blob()?;
-        let bytes = blob.try_into().map_err(|_| FromSqlError::InvalidBlobSize {
-            expected_size: size_of::<u64>(),
-            blob_size: blob.len(),
-        })?;
-        Ok(Self(u64::from_be_bytes(bytes)))
-    }
-}
-
 impl StoredNote {
     fn read(row: &Row<'_>) -> tokio_rusqlite::rusqlite::Result<Self> {
         Ok(Self {
@@ -110,7 +81,7 @@ impl StoredNote {
 
     fn into_note(self) -> Result<PileNote, NoteError> {
         PileNote::restore(
-            NoteId::from_parts(self.id),
+            NoteId::restore(self.id),
             self.body,
             self.revision.0,
             self.created_at,
@@ -547,22 +518,11 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            document.note(NoteId::from_parts(id)).await,
+            document.note(NoteId::restore(id)).await,
             Err(DocumentError::InvalidNote(NoteError::InvalidRevision))
         ));
 
         drop(document);
         std::fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn sql_u64_rejects_wrong_blob_size() {
-        assert!(matches!(
-            SqlU64::column_result(ValueRef::Blob(&[0; 7])),
-            Err(FromSqlError::InvalidBlobSize {
-                expected_size: 8,
-                blob_size: 7
-            })
-        ));
     }
 }
