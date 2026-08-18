@@ -16,4 +16,7 @@ untitled-note = Untitled note
 new-note = New note
 note-placeholder = Write a note…
 add-note = Add Note
+edit-note = Edit
+save-note = Save
+cancel = Cancel
 git-description = Git commit {$hash} on {$date}

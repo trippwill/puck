@@ -29,6 +29,8 @@ pub struct AppModel {
     selected_id: Option<NoteId>,
     selected_note: Option<PileNote>,
     draft: text_editor::Content,
+    edit_draft: text_editor::Content,
+    editing: bool,
     busy: bool,
     error: Option<String>,
 }
@@ -37,14 +39,19 @@ pub struct AppModel {
 #[derive(Debug, Clone)]
 pub enum Message {
     AddNote,
+    CancelEditing,
     ClearError,
     DocumentLoaded(Result<Option<Document>, String>),
     DraftEdited(text_editor::Action),
+    EditDraftEdited(text_editor::Action),
+    EditNote,
     LaunchUrl(String),
     NewDocument,
     NoteAdded(Result<PileNote, String>),
+    NoteEdited(Result<PileNote, String>),
     NoteLoaded(NoteId, Result<Option<PileNote>, String>),
     OpenDocument,
+    SaveNote,
     SelectNote(NoteId),
     SummariesLoaded(Result<Vec<NoteSummary>, String>),
     ToggleContextPage(ContextPage),
@@ -84,6 +91,8 @@ impl cosmic::Application for AppModel {
             selected_id: None,
             selected_note: None,
             draft: text_editor::Content::new(),
+            edit_draft: text_editor::Content::new(),
+            editing: false,
             busy: false,
             error: None,
         };
@@ -108,10 +117,10 @@ impl cosmic::Application for AppModel {
     fn header_end(&self) -> Vec<Element<'_, Self::Message>> {
         vec![
             widget::button::text(fl!("new-document"))
-                .on_press_maybe((!self.busy).then_some(Message::NewDocument))
+                .on_press_maybe((!self.busy && !self.editing).then_some(Message::NewDocument))
                 .into(),
             widget::button::suggested(fl!("open-document"))
-                .on_press_maybe((!self.busy).then_some(Message::OpenDocument))
+                .on_press_maybe((!self.busy && !self.editing).then_some(Message::OpenDocument))
                 .into(),
         ]
     }
@@ -177,7 +186,7 @@ impl cosmic::Application for AppModel {
     fn update(&mut self, message: Self::Message) -> Task<cosmic::Action<Self::Message>> {
         match message {
             Message::NewDocument => {
-                if self.busy {
+                if self.busy || self.editing {
                     return Task::none();
                 }
                 self.busy = true;
@@ -213,7 +222,7 @@ impl cosmic::Application for AppModel {
                 });
             }
             Message::OpenDocument => {
-                if self.busy {
+                if self.busy || self.editing {
                     return Task::none();
                 }
                 self.busy = true;
@@ -253,6 +262,8 @@ impl cosmic::Application for AppModel {
                         self.selected_id = None;
                         self.selected_note = None;
                         self.draft = text_editor::Content::new();
+                        self.edit_draft = text_editor::Content::new();
+                        self.editing = false;
                         self.busy = true;
                         return cosmic::task::batch([
                             self.update_title(),
@@ -278,6 +289,9 @@ impl cosmic::Application for AppModel {
                 }
             }
             Message::SelectNote(id) => {
+                if self.editing {
+                    return Task::none();
+                }
                 self.selected_id = Some(id);
                 self.selected_note = None;
                 let Some(document) = self.document.clone() else {
@@ -297,18 +311,72 @@ impl cosmic::Application for AppModel {
             Message::NoteLoaded(id, result) => {
                 if self.selected_id == Some(id) {
                     match result {
-                        Ok(Some(note)) => self.selected_note = Some(note),
+                        Ok(Some(note)) => {
+                            self.selected_note = Some(note);
+                            self.edit_draft = text_editor::Content::new();
+                            self.editing = false;
+                        }
                         Ok(None) => self.error = Some(fl!("note-not-found")),
                         Err(error) => self.error = Some(error),
                     }
                 }
             }
             Message::DraftEdited(action) => self.draft.perform(action),
+            Message::EditDraftEdited(action) => self.edit_draft.perform(action),
+            Message::EditNote => {
+                if self.busy || self.editing {
+                    return Task::none();
+                }
+                let Some(note) = &self.selected_note else {
+                    return Task::none();
+                };
+                self.edit_draft = text_editor::Content::with_text(note.body());
+                self.editing = true;
+            }
+            Message::CancelEditing => {
+                if !self.busy {
+                    self.edit_draft = text_editor::Content::new();
+                    self.editing = false;
+                }
+            }
+            Message::SaveNote => {
+                if self.busy || !self.editing {
+                    return Task::none();
+                }
+                let Some(document) = self.document.clone() else {
+                    return Task::none();
+                };
+                let Some(note) = &self.selected_note else {
+                    return Task::none();
+                };
+                let body = self.edit_draft.text();
+                if body == note.body() {
+                    return Task::none();
+                }
+                let note = match note.edit(body) {
+                    Ok(note) => note,
+                    Err(error) => {
+                        self.error = Some(error.to_string());
+                        return Task::none();
+                    }
+                };
+
+                self.busy = true;
+                self.error = None;
+                return cosmic::task::future(async move {
+                    let result = document
+                        .execute(vec![Command::EditNote(note.clone())])
+                        .await
+                        .map(|()| note)
+                        .map_err(|error| error.to_string());
+                    Message::NoteEdited(result)
+                });
+            }
             Message::AddNote => {
                 let Some(document) = self.document.clone() else {
                     return Task::none();
                 };
-                if self.busy {
+                if self.busy || self.editing {
                     return Task::none();
                 }
 
@@ -340,6 +408,22 @@ impl cosmic::Application for AppModel {
                     Err(error) => self.error = Some(error),
                 }
             }
+            Message::NoteEdited(result) => {
+                self.busy = false;
+                match result {
+                    Ok(note) => {
+                        self.selected_id = Some(note.id());
+                        self.selected_note = Some(note);
+                        self.edit_draft = text_editor::Content::new();
+                        self.editing = false;
+                        if let Some(document) = self.document.clone() {
+                            self.busy = true;
+                            return load_summaries(document);
+                        }
+                    }
+                    Err(error) => self.error = Some(error),
+                }
+            }
             Message::ClearError => self.error = None,
             Message::ToggleContextPage(context_page) => {
                 if self.context_page == context_page {
@@ -361,6 +445,7 @@ impl cosmic::Application for AppModel {
 }
 
 impl AppModel {
+    #[allow(clippy::too_many_lines)]
     fn document_view(&self) -> Element<'_, Message> {
         let spacing = cosmic::theme::spacing();
         let document = self
@@ -383,7 +468,9 @@ impl AppModel {
             list = list.add(
                 widget::list_column::button(widget::text(preview))
                     .selected(self.selected_id == Some(summary.id))
-                    .on_press(Message::SelectNote(summary.id)),
+                    .on_press_maybe(
+                        (!self.editing && !self.busy).then_some(Message::SelectNote(summary.id)),
+                    ),
             );
         }
 
@@ -400,11 +487,48 @@ impl AppModel {
             .width(260)
             .height(Length::Fill);
 
-        let body: Element<_> = match &self.selected_note {
-            Some(note) => widget::scrollable(widget::text(note.body()).width(Length::Fill))
+        let body: Element<_> = match (&self.selected_note, self.editing) {
+            (Some(note), true) => {
+                let editor = widget::text_editor(&self.edit_draft).height(Length::Fill);
+                let editor = if self.busy {
+                    editor
+                } else {
+                    editor.on_action(Message::EditDraftEdited)
+                };
+
+                widget::column::with_capacity(2)
+                    .push(editor)
+                    .push(
+                        widget::row::with_capacity(2)
+                            .push(
+                                widget::button::suggested(fl!("save-note")).on_press_maybe(
+                                    (!self.busy && self.edit_draft.text() != note.body())
+                                        .then_some(Message::SaveNote),
+                                ),
+                            )
+                            .push(
+                                widget::button::text(fl!("cancel"))
+                                    .on_press_maybe((!self.busy).then_some(Message::CancelEditing)),
+                            )
+                            .spacing(spacing.space_s),
+                    )
+                    .spacing(spacing.space_s)
+                    .height(Length::Fill)
+                    .into()
+            }
+            (Some(note), false) => widget::column::with_capacity(2)
+                .push(
+                    widget::scrollable(widget::text(note.body()).width(Length::Fill))
+                        .height(Length::Fill),
+                )
+                .push(
+                    widget::button::text(fl!("edit-note"))
+                        .on_press_maybe((!self.busy).then_some(Message::EditNote)),
+                )
+                .spacing(spacing.space_s)
                 .height(Length::Fill)
                 .into(),
-            None => widget::container(widget::text(fl!("select-note")))
+            (None, _) => widget::container(widget::text(fl!("select-note")))
                 .center_x(Length::Fill)
                 .center_y(Length::Fill)
                 .into(),
@@ -420,13 +544,15 @@ impl AppModel {
             )
             .push(
                 widget::button::suggested(fl!("add-note"))
-                    .on_press_maybe((!self.busy).then_some(Message::AddNote)),
+                    .on_press_maybe((!self.busy && !self.editing).then_some(Message::AddNote)),
             )
             .spacing(spacing.space_s);
 
-        let main = widget::column::with_capacity(2)
-            .push(body)
-            .push(composer)
+        let mut main = widget::column::with_capacity(2).push(body);
+        if !self.editing {
+            main = main.push(composer);
+        }
+        let main = main
             .spacing(spacing.space_m)
             .width(Length::Fill)
             .height(Length::Fill);
