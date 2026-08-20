@@ -294,11 +294,15 @@ mod tests {
     use crate::core::prelude::*;
     use crate::data::query::{
         CollectionById,
+        Collections,
         FieldByKey,
         FieldDefById,
+        FieldDefs,
+        FieldsByRecord,
         NoteById,
         NoteSummaries,
         RecordById,
+        RecordsByCollection,
     };
 
     #[test]
@@ -468,6 +472,9 @@ mod tests {
         let document = Document::create(&path).await.unwrap();
         let collection = Collection::new("Values");
         let record = collection.new_record();
+        let second_record = collection.new_record();
+        let other_collection = Collection::new("Other");
+        let other_record = other_collection.new_record();
         let text_def = Text::def("Text");
         let boolean_def = Boolean::def("Boolean");
         let integer_def = Integer::def("Integer");
@@ -479,6 +486,9 @@ mod tests {
         let timestamp = time::Timestamp::from_milliseconds(1_777_777_777_777).unwrap();
         let collection_id = collection.id();
         let record_id = record.id();
+        let second_record_id = second_record.id();
+        let other_collection_id = other_collection.id();
+        let other_record_id = other_record.id();
         let text_id = text_def.id();
         let boolean_id = boolean_def.id();
         let integer_id = integer_def.id();
@@ -491,12 +501,33 @@ mod tests {
         let date_field = record.new_field(&date_def, date);
         let time_field = record.new_field(&time_def, time);
         let timestamp_field = record.new_field(&timestamp_def, timestamp);
+        let other_text_field = other_record.new_field(&text_def, String::from("other"));
         let text_key = text_field.key();
+
+        assert!(document.query(Collections).await.unwrap().is_empty());
+        assert!(document.query(FieldDefs).await.unwrap().is_empty());
+        assert!(
+            document
+                .query(RecordsByCollection(collection_id))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            document
+                .query(FieldsByRecord(record_id))
+                .await
+                .unwrap()
+                .is_empty()
+        );
 
         document
             .execute(vec![
                 Command::UpsertCollection(collection),
                 Command::UpsertRecord(record),
+                Command::UpsertRecord(second_record),
+                Command::UpsertCollection(other_collection),
+                Command::UpsertRecord(other_record),
                 Command::UpsertFieldDef(AnyFieldDef::Text(text_def)),
                 Command::UpsertFieldDef(AnyFieldDef::Boolean(boolean_def)),
                 Command::UpsertFieldDef(AnyFieldDef::Integer(integer_def)),
@@ -509,9 +540,104 @@ mod tests {
                 Command::UpsertField(AnyField::Date(date_field)),
                 Command::UpsertField(AnyField::Time(time_field)),
                 Command::UpsertField(AnyField::Timestamp(timestamp_field)),
+                Command::UpsertField(AnyField::Text(other_text_field)),
             ])
             .await
             .unwrap();
+
+        let mut expected_collection_ids =
+            vec![collection_id.to_string(), other_collection_id.to_string()];
+        expected_collection_ids.sort();
+        assert_eq!(
+            document
+                .query(Collections)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|collection| collection.id().to_string())
+                .collect::<Vec<_>>(),
+            expected_collection_ids
+        );
+
+        let mut expected_record_ids = vec![record_id.to_string(), second_record_id.to_string()];
+        expected_record_ids.sort();
+        assert_eq!(
+            document
+                .query(RecordsByCollection(collection_id))
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|record| record.id().to_string())
+                .collect::<Vec<_>>(),
+            expected_record_ids
+        );
+        assert_eq!(
+            document
+                .query(RecordsByCollection(other_collection_id))
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|record| record.id())
+                .collect::<Vec<_>>(),
+            vec![other_record_id]
+        );
+
+        let mut expected_def_ids = vec![
+            text_id.to_string(),
+            boolean_id.to_string(),
+            integer_id.to_string(),
+            date_id.to_string(),
+            time_id.to_string(),
+            timestamp_id.to_string(),
+        ];
+        expected_def_ids.sort();
+        assert_eq!(
+            document
+                .query(FieldDefs)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|def| def.id().to_string())
+                .collect::<Vec<_>>(),
+            expected_def_ids
+        );
+
+        let mut expected_field_def_ids = vec![
+            text_id.to_string(),
+            boolean_id.to_string(),
+            integer_id.to_string(),
+            date_id.to_string(),
+            time_id.to_string(),
+            timestamp_id.to_string(),
+        ];
+        expected_field_def_ids.sort();
+        assert_eq!(
+            document
+                .query(FieldsByRecord(record_id))
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|field| field.def_id().to_string())
+                .collect::<Vec<_>>(),
+            expected_field_def_ids
+        );
+        assert!(
+            document
+                .query(FieldsByRecord(second_record_id))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            document
+                .query(FieldsByRecord(other_record_id))
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|field| field.def_id())
+                .collect::<Vec<_>>(),
+            vec![text_id]
+        );
 
         let stored_collection = document
             .query(CollectionById(collection_id))

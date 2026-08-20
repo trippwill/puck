@@ -13,12 +13,16 @@ pub mod prelude {
         ArchivedNoteById,
         ArchivedNoteSummaries,
         CollectionById,
+        Collections,
         FieldByKey,
         FieldDefById,
+        FieldDefs,
+        FieldsByRecord,
         NoteById,
         NoteSearch,
         NoteSummaries,
         RecordById,
+        RecordsByCollection,
     };
 }
 
@@ -145,6 +149,25 @@ impl Query for CollectionById {
     }
 }
 
+/// A query for all collections ordered by ID.
+pub struct Collections;
+impl Query for Collections {
+    type Output = Vec<Collection>;
+
+    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
+        let mut statement = conn.prepare("SELECT id, name FROM collections ORDER BY id")?;
+        statement
+            .query_map([], |row| {
+                Ok(Collection::restore(
+                    CollectionId::restore(row.get(0)?),
+                    &row.get::<_, String>(1)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(Into::into)
+    }
+}
+
 /// A query for a record by ID.
 pub struct RecordById(pub RecordId);
 impl Query for RecordById {
@@ -161,6 +184,23 @@ impl Query for RecordById {
     }
 }
 
+/// A query for records in a collection ordered by ID.
+pub struct RecordsByCollection(pub CollectionId);
+impl Query for RecordsByCollection {
+    type Output = Vec<Record>;
+
+    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
+        let mut statement =
+            conn.prepare("SELECT id FROM records WHERE collection_id = ?1 ORDER BY id")?;
+        statement
+            .query_map([*self.0.as_uuid()], |row| {
+                Ok(Record::restore(RecordId::restore(row.get(0)?), self.0))
+            })?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(Into::into)
+    }
+}
+
 /// A query for a field definition by ID.
 pub struct FieldDefById(pub FieldDefId);
 impl Query for FieldDefById {
@@ -168,35 +208,26 @@ impl Query for FieldDefById {
 
     fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
         conn.query_row(
-            "SELECT name, type FROM field_defs WHERE id = ?1",
+            "SELECT id, name, type FROM field_defs WHERE id = ?1",
             [*self.0.as_uuid()],
-            |row| {
-                let name: String = row.get(0)?;
-                let kind: SqlFieldType = row.get(1)?;
-                Ok(match kind {
-                    SqlFieldType::Text => {
-                        AnyFieldDef::Text(FieldDef::<Text>::restore(self.0, &name))
-                    }
-                    SqlFieldType::Boolean => {
-                        AnyFieldDef::Boolean(FieldDef::<Boolean>::restore(self.0, &name))
-                    }
-                    SqlFieldType::Integer => {
-                        AnyFieldDef::Integer(FieldDef::<Integer>::restore(self.0, &name))
-                    }
-                    SqlFieldType::Date => {
-                        AnyFieldDef::Date(FieldDef::<Date>::restore(self.0, &name))
-                    }
-                    SqlFieldType::Time => {
-                        AnyFieldDef::Time(FieldDef::<Time>::restore(self.0, &name))
-                    }
-                    SqlFieldType::Timestamp => {
-                        AnyFieldDef::Timestamp(FieldDef::<Timestamp>::restore(self.0, &name))
-                    }
-                })
-            },
+            read_field_def,
         )
         .optional()
         .map_err(Into::into)
+    }
+}
+
+/// A query for all field definitions ordered by ID.
+pub struct FieldDefs;
+impl Query for FieldDefs {
+    type Output = Vec<AnyFieldDef>;
+
+    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
+        let mut statement = conn.prepare("SELECT id, name, type FROM field_defs ORDER BY id")?;
+        statement
+            .query_map([], read_field_def)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(Into::into)
     }
 }
 
@@ -208,59 +239,104 @@ impl Query for FieldByKey {
     fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
         let (record_id, def_id) = self.0;
         conn.query_row(
-            "SELECT type, value FROM fields WHERE record_id = ?1 AND field_def_id = ?2",
+            r"
+            SELECT record_id, field_def_id, type, value
+            FROM fields
+            WHERE record_id = ?1 AND field_def_id = ?2
+            ",
             rusqlite::params![*record_id.as_uuid(), *def_id.as_uuid()],
-            |row| {
-                let kind: SqlFieldType = row.get(0)?;
-                Ok(match kind {
-                    SqlFieldType::Text => {
-                        AnyField::Text(Field::<Text>::restore(def_id, record_id, row.get(1)?))
-                    }
-                    SqlFieldType::Boolean => AnyField::Boolean(Field::<Boolean>::restore(
-                        def_id,
-                        record_id,
-                        match row.get(1)? {
-                            0_i64 => false,
-                            1 => true,
-                            value => {
-                                return Err(rusqlite::Error::FromSqlConversionFailure(
-                                    1,
-                                    rusqlite::types::Type::Integer,
-                                    std::io::Error::new(
-                                        std::io::ErrorKind::InvalidData,
-                                        format!("invalid boolean value: {value}"),
-                                    )
-                                    .into(),
-                                ));
-                            }
-                        },
-                    )),
-                    SqlFieldType::Integer => {
-                        AnyField::Integer(Field::<Integer>::restore(def_id, record_id, row.get(1)?))
-                    }
-                    SqlFieldType::Date => {
-                        AnyField::Date(Field::<Date>::restore(def_id, record_id, row.get(1)?))
-                    }
-                    SqlFieldType::Time => {
-                        AnyField::Time(Field::<Time>::restore(def_id, record_id, row.get(1)?))
-                    }
-                    SqlFieldType::Timestamp => AnyField::Timestamp(Field::<Timestamp>::restore(
-                        def_id,
-                        record_id,
-                        time::Timestamp::from_milliseconds(row.get(1)?).map_err(|error| {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                1,
-                                rusqlite::types::Type::Integer,
-                                Box::new(error),
-                            )
-                        })?,
-                    )),
-                })
-            },
+            read_field,
         )
         .optional()
         .map_err(Into::into)
     }
+}
+
+/// A query for fields on a record ordered by definition ID.
+pub struct FieldsByRecord(pub RecordId);
+impl Query for FieldsByRecord {
+    type Output = Vec<AnyField>;
+
+    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
+        let mut statement = conn.prepare(
+            r"
+            SELECT record_id, field_def_id, type, value
+            FROM fields
+            WHERE record_id = ?1
+            ORDER BY field_def_id
+            ",
+        )?;
+        statement
+            .query_map([*self.0.as_uuid()], read_field)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(Into::into)
+    }
+}
+
+fn read_field_def(row: &rusqlite::Row<'_>) -> rusqlite::Result<AnyFieldDef> {
+    let id = FieldDefId::restore(row.get(0)?);
+    let name: String = row.get(1)?;
+    let kind: SqlFieldType = row.get(2)?;
+    Ok(match kind {
+        SqlFieldType::Text => AnyFieldDef::Text(FieldDef::<Text>::restore(id, &name)),
+        SqlFieldType::Boolean => AnyFieldDef::Boolean(FieldDef::<Boolean>::restore(id, &name)),
+        SqlFieldType::Integer => AnyFieldDef::Integer(FieldDef::<Integer>::restore(id, &name)),
+        SqlFieldType::Date => AnyFieldDef::Date(FieldDef::<Date>::restore(id, &name)),
+        SqlFieldType::Time => AnyFieldDef::Time(FieldDef::<Time>::restore(id, &name)),
+        SqlFieldType::Timestamp => {
+            AnyFieldDef::Timestamp(FieldDef::<Timestamp>::restore(id, &name))
+        }
+    })
+}
+
+fn read_field(row: &rusqlite::Row<'_>) -> rusqlite::Result<AnyField> {
+    let record_id = RecordId::restore(row.get(0)?);
+    let def_id = FieldDefId::restore(row.get(1)?);
+    let kind: SqlFieldType = row.get(2)?;
+    Ok(match kind {
+        SqlFieldType::Text => {
+            AnyField::Text(Field::<Text>::restore(def_id, record_id, row.get(3)?))
+        }
+        SqlFieldType::Boolean => AnyField::Boolean(Field::<Boolean>::restore(
+            def_id,
+            record_id,
+            match row.get(3)? {
+                0_i64 => false,
+                1 => true,
+                value => {
+                    return Err(rusqlite::Error::FromSqlConversionFailure(
+                        3,
+                        rusqlite::types::Type::Integer,
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("invalid boolean value: {value}"),
+                        )
+                        .into(),
+                    ));
+                }
+            },
+        )),
+        SqlFieldType::Integer => {
+            AnyField::Integer(Field::<Integer>::restore(def_id, record_id, row.get(3)?))
+        }
+        SqlFieldType::Date => {
+            AnyField::Date(Field::<Date>::restore(def_id, record_id, row.get(3)?))
+        }
+        SqlFieldType::Time => {
+            AnyField::Time(Field::<Time>::restore(def_id, record_id, row.get(3)?))
+        }
+        SqlFieldType::Timestamp => AnyField::Timestamp(Field::<Timestamp>::restore(
+            def_id,
+            record_id,
+            time::Timestamp::from_milliseconds(row.get(3)?).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    3,
+                    rusqlite::types::Type::Integer,
+                    Box::new(error),
+                )
+            })?,
+        )),
+    })
 }
 
 fn stored_note(
