@@ -29,14 +29,6 @@ pub const MAX_PREVIEW_CHARS: usize = 72;
 
 uuidv7_id!(NoteId, "A unique note identifier.");
 
-impl std::str::FromStr for NoteId {
-    type Err = uuid::Error;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        value.parse().map(Self::restore)
-    }
-}
-
 /// An error creating, restoring, or editing a pile note.
 #[derive(Debug, Error)]
 pub enum NoteError {
@@ -265,6 +257,7 @@ impl<T: NoteState> From<&Note<T>> for NoteSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::{Collection, CollectionId, FieldDefId, FieldType, RecordId, Text};
 
     #[test]
     fn edit_should_increment_revision() {
@@ -374,9 +367,24 @@ mod tests {
     }
 
     #[test]
-    fn note_ids_parse_from_their_display_form() {
+    fn domain_ids_parse_from_their_display_form() {
         let note = Note::create("Some body");
+        let collection = Collection::new("Hosts");
+        let record = collection.new_record();
+        let field_def = Text::def("Hostname");
 
         assert_eq!(note.id().to_string().parse::<NoteId>().unwrap(), note.id());
+        assert_eq!(
+            collection.id().to_string().parse::<CollectionId>().unwrap(),
+            collection.id()
+        );
+        assert_eq!(
+            record.id().to_string().parse::<RecordId>().unwrap(),
+            record.id()
+        );
+        assert_eq!(
+            field_def.id().to_string().parse::<FieldDefId>().unwrap(),
+            field_def.id()
+        );
     }
 }

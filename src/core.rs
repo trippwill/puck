@@ -71,6 +71,14 @@ macro_rules! uuidv7_id {
                 self.0.fmt(f)
             }
         }
+
+        impl std::str::FromStr for $name {
+            type Err = uuid::Error;
+
+            fn from_str(value: &str) -> Result<Self, Self::Err> {
+                value.parse().map(Self::restore)
+            }
+        }
     };
 }
 
