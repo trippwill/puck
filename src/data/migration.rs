@@ -12,7 +12,7 @@ use tokio_rusqlite::rusqlite::{self, Connection, Transaction};
 use super::version::SchemaVersion;
 
 pub(super) const BASELINE_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 0);
-pub(super) const CURRENT_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 0);
+pub(super) const CURRENT_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 1);
 pub(super) const MINIMUM_COMPATIBLE_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 0);
 
 #[derive(Clone, Copy)]
@@ -27,10 +27,10 @@ impl Migration {
     }
 }
 
-const MIGRATIONS: &[Migration] = &[Migration::new(
-    BASELINE_VERSION,
-    include_str!("migrations/0.0.0.sql"),
-)];
+const MIGRATIONS: &[Migration] = &[
+    Migration::new(BASELINE_VERSION, include_str!("migrations/0.0.0.sql")),
+    Migration::new(CURRENT_VERSION, include_str!("migrations/0.0.1.sql")),
+];
 
 #[derive(Debug)]
 pub(super) enum MigrationError {

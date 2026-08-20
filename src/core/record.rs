@@ -16,8 +16,8 @@ uuidv7_id!(RecordId, "A unique record identifier.");
 /// A set of field values owned by a collection.
 #[derive(Debug)]
 pub struct Record {
-    collection_id: CollectionId,
     id: RecordId,
+    collection_id: CollectionId,
 }
 
 impl Record {
@@ -26,20 +26,20 @@ impl Record {
     #[allow(clippy::new_without_default)]
     pub(crate) fn new(collection: &Collection) -> Self {
         Self {
-            collection_id: collection.id(),
             id: RecordId::new(),
+            collection_id: collection.id(),
         }
     }
 
     /// Returns the record ID.
     #[must_use]
-    pub(crate) const fn id(&self) -> RecordId {
+    pub const fn id(&self) -> RecordId {
         self.id
     }
 
     /// Returns the record's collection ID.
     #[must_use]
-    pub(crate) const fn collection_id(&self) -> CollectionId {
+    pub const fn collection_id(&self) -> CollectionId {
         self.collection_id
     }
 
@@ -50,8 +50,8 @@ impl Record {
     }
 
     #[must_use]
-    pub(crate) fn restore(collection_id: CollectionId, id: RecordId) -> Self {
-        Self { collection_id, id }
+    pub(crate) fn restore(id: RecordId, collection_id: CollectionId) -> Self {
+        Self { id, collection_id }
     }
 }
 
@@ -75,7 +75,7 @@ mod tests {
     fn restore_preserves_record_identity_and_owner() {
         let collection_id = CollectionId::new();
         let record_id = RecordId::new();
-        let record = Record::restore(collection_id, record_id);
+        let record = Record::restore(record_id, collection_id);
 
         assert_eq!(record.collection_id(), collection_id);
         assert_eq!(record.id(), record_id);

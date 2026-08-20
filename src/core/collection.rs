@@ -31,7 +31,7 @@ impl Collection {
 
     /// Returns the collection ID.
     #[must_use]
-    pub(crate) const fn id(&self) -> CollectionId {
+    pub const fn id(&self) -> CollectionId {
         self.id
     }
 

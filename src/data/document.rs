@@ -286,12 +286,19 @@ impl Drop for Document {
 mod tests {
     use std::path::Path;
 
-    use time::OffsetDateTime;
+    use time::{Month, OffsetDateTime};
     use tokio_rusqlite::params;
 
     use super::*;
     use crate::core::prelude::*;
-    use crate::data::query::{NoteById, NoteSummaries};
+    use crate::data::query::{
+        CollectionById,
+        FieldByKey,
+        FieldDefById,
+        NoteById,
+        NoteSummaries,
+        RecordById,
+    };
 
     #[test]
     fn invalid_application_id_is_rejected() {
@@ -449,6 +456,201 @@ mod tests {
         assert_eq!(row.3, older.created_at());
         assert_eq!(row.4, older.updated_at());
         assert_eq!(row.5, 0);
+
+        drop(document);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn structured_data_round_trips() {
+        let path = std::env::temp_dir().join(format!("puck-{}.db", uuid::Uuid::now_v7()));
+        let document = Document::create(&path).await.unwrap();
+        let collection = Collection::new("Values");
+        let record = collection.new_record();
+        let text_def = Text::def("Text");
+        let boolean_def = Boolean::def("Boolean");
+        let integer_def = Integer::def("Integer");
+        let date_def = Date::def("Date");
+        let time_def = Time::def("Time");
+        let timestamp_def = Timestamp::def("Timestamp");
+        let date = time::Date::from_calendar_date(2026, Month::August, 20).unwrap();
+        let time = time::Time::from_hms(19, 52, 54).unwrap();
+        let timestamp = time::Timestamp::from_milliseconds(1_777_777_777_777).unwrap();
+        let collection_id = collection.id();
+        let record_id = record.id();
+        let text_id = text_def.id();
+        let boolean_id = boolean_def.id();
+        let integer_id = integer_def.id();
+        let date_id = date_def.id();
+        let time_id = time_def.id();
+        let timestamp_id = timestamp_def.id();
+        let text_field = record.new_field(&text_def, String::from("hello"));
+        let boolean_field = record.new_field(&boolean_def, true);
+        let integer_field = record.new_field(&integer_def, -42);
+        let date_field = record.new_field(&date_def, date);
+        let time_field = record.new_field(&time_def, time);
+        let timestamp_field = record.new_field(&timestamp_def, timestamp);
+        let text_key = text_field.key();
+
+        document
+            .execute(vec![
+                Command::UpsertCollection(collection),
+                Command::UpsertRecord(record),
+                Command::UpsertFieldDef(AnyFieldDef::Text(text_def)),
+                Command::UpsertFieldDef(AnyFieldDef::Boolean(boolean_def)),
+                Command::UpsertFieldDef(AnyFieldDef::Integer(integer_def)),
+                Command::UpsertFieldDef(AnyFieldDef::Date(date_def)),
+                Command::UpsertFieldDef(AnyFieldDef::Time(time_def)),
+                Command::UpsertFieldDef(AnyFieldDef::Timestamp(timestamp_def)),
+                Command::UpsertField(AnyField::Text(text_field)),
+                Command::UpsertField(AnyField::Boolean(boolean_field)),
+                Command::UpsertField(AnyField::Integer(integer_field)),
+                Command::UpsertField(AnyField::Date(date_field)),
+                Command::UpsertField(AnyField::Time(time_field)),
+                Command::UpsertField(AnyField::Timestamp(timestamp_field)),
+            ])
+            .await
+            .unwrap();
+
+        let stored_collection = document
+            .query(CollectionById(collection_id))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored_collection.id(), collection_id);
+        assert_eq!(stored_collection.name(), "Values");
+
+        let stored_record = document
+            .query(RecordById(record_id))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored_record.id(), record_id);
+        assert_eq!(stored_record.collection_id(), collection_id);
+
+        assert!(matches!(
+            document.query(FieldDefById(text_id)).await.unwrap(),
+            Some(AnyFieldDef::Text(def)) if def.name() == "Text"
+        ));
+        assert!(matches!(
+            document.query(FieldDefById(boolean_id)).await.unwrap(),
+            Some(AnyFieldDef::Boolean(def)) if def.name() == "Boolean"
+        ));
+        assert!(matches!(
+            document.query(FieldDefById(integer_id)).await.unwrap(),
+            Some(AnyFieldDef::Integer(def)) if def.name() == "Integer"
+        ));
+        assert!(matches!(
+            document.query(FieldDefById(date_id)).await.unwrap(),
+            Some(AnyFieldDef::Date(def)) if def.name() == "Date"
+        ));
+        assert!(matches!(
+            document.query(FieldDefById(time_id)).await.unwrap(),
+            Some(AnyFieldDef::Time(def)) if def.name() == "Time"
+        ));
+        assert!(matches!(
+            document.query(FieldDefById(timestamp_id)).await.unwrap(),
+            Some(AnyFieldDef::Timestamp(def)) if def.name() == "Timestamp"
+        ));
+
+        assert!(matches!(
+            document.query(FieldByKey(text_key)).await.unwrap(),
+            Some(AnyField::Text(field)) if field.val() == "hello"
+        ));
+        assert!(matches!(
+            document
+                .query(FieldByKey((record_id, boolean_id)))
+                .await
+                .unwrap(),
+            Some(AnyField::Boolean(field)) if *field.val()
+        ));
+        assert!(matches!(
+            document
+                .query(FieldByKey((record_id, integer_id)))
+                .await
+                .unwrap(),
+            Some(AnyField::Integer(field)) if *field.val() == -42
+        ));
+        assert!(matches!(
+            document
+                .query(FieldByKey((record_id, date_id)))
+                .await
+                .unwrap(),
+            Some(AnyField::Date(field)) if *field.val() == date
+        ));
+        assert!(matches!(
+            document
+                .query(FieldByKey((record_id, time_id)))
+                .await
+                .unwrap(),
+            Some(AnyField::Time(field)) if *field.val() == time
+        ));
+        assert!(matches!(
+            document
+                .query(FieldByKey((record_id, timestamp_id)))
+                .await
+                .unwrap(),
+            Some(AnyField::Timestamp(field)) if *field.val() == timestamp
+        ));
+
+        assert_eq!(
+            document
+                .query(CollectionById(CollectionId::new()))
+                .await
+                .unwrap()
+                .map(|collection| collection.id()),
+            None
+        );
+        assert_eq!(
+            document
+                .query(RecordById(RecordId::new()))
+                .await
+                .unwrap()
+                .map(|record| record.id()),
+            None
+        );
+        assert!(
+            document
+                .query(FieldDefById(FieldDefId::new()))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            document
+                .query(FieldByKey((record_id, FieldDefId::new())))
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        document
+            .conn
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE fields SET value = 2 WHERE record_id = ?1 AND field_def_id = ?2",
+                    params![*record_id.as_uuid(), *boolean_id.as_uuid()],
+                )?;
+                conn.execute(
+                    "UPDATE fields SET value = ?3 WHERE record_id = ?1 AND field_def_id = ?2",
+                    params![*record_id.as_uuid(), *timestamp_id.as_uuid(), i64::MAX],
+                )?;
+                Ok::<(), rusqlite::Error>(())
+            })
+            .await
+            .unwrap();
+        assert!(
+            document
+                .query(FieldByKey((record_id, boolean_id)))
+                .await
+                .is_err()
+        );
+        assert!(
+            document
+                .query(FieldByKey((record_id, timestamp_id)))
+                .await
+                .is_err()
+        );
 
         drop(document);
         std::fs::remove_file(path).unwrap();

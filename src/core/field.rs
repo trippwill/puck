@@ -62,7 +62,7 @@ pub struct Date;
 /// A wall-clock time without a date or offset.
 #[derive(Debug)]
 pub struct Time;
-/// A unix epoch timestamp in seconds and nanoseconds since 1970-01-01T00:00:00Z.
+/// A unix epoch timestamp in milliseconds since 1970-01-01T00:00:00Z.
 #[derive(Debug)]
 pub struct Timestamp;
 
@@ -84,13 +84,19 @@ impl<T: FieldType> Field<T> {
     }
 
     /// Returns the field's definition ID.
-    pub(crate) const fn def_id(&self) -> FieldDefId {
+    pub const fn def_id(&self) -> FieldDefId {
         self.def_id
     }
 
     /// Returns the field's record ID.
-    pub(crate) const fn record_id(&self) -> RecordId {
+    pub const fn record_id(&self) -> RecordId {
         self.record_id
+    }
+
+    /// Returns the field's record and definition IDs.
+    #[must_use]
+    pub const fn key(&self) -> (RecordId, FieldDefId) {
+        (self.record_id, self.def_id)
     }
 
     /// Returns a reference to the field's value.
@@ -110,6 +116,40 @@ impl<T: FieldType> Field<T> {
     }
 }
 
+impl AnyField {
+    /// Returns the field's definition ID.
+    #[must_use]
+    pub const fn def_id(&self) -> FieldDefId {
+        match self {
+            AnyField::Text(f) => f.def_id(),
+            AnyField::Boolean(f) => f.def_id(),
+            AnyField::Integer(f) => f.def_id(),
+            AnyField::Date(f) => f.def_id(),
+            AnyField::Time(f) => f.def_id(),
+            AnyField::Timestamp(f) => f.def_id(),
+        }
+    }
+
+    /// Returns the field's record ID.
+    #[must_use]
+    pub const fn record_id(&self) -> RecordId {
+        match self {
+            AnyField::Text(f) => f.record_id(),
+            AnyField::Boolean(f) => f.record_id(),
+            AnyField::Integer(f) => f.record_id(),
+            AnyField::Date(f) => f.record_id(),
+            AnyField::Time(f) => f.record_id(),
+            AnyField::Timestamp(f) => f.record_id(),
+        }
+    }
+
+    /// Returns the field's record and definition IDs.
+    #[must_use]
+    pub const fn key(&self) -> (RecordId, FieldDefId) {
+        (self.record_id(), self.def_id())
+    }
+}
+
 /// A definition that supports values of field type `T`.
 #[derive(Debug)]
 pub struct FieldDef<T: FieldType> {
@@ -121,7 +161,7 @@ pub struct FieldDef<T: FieldType> {
 impl<T: FieldType> FieldDef<T> {
     /// Returns the ID.
     #[must_use]
-    pub(crate) const fn id(&self) -> FieldDefId {
+    pub const fn id(&self) -> FieldDefId {
         self.id
     }
 
@@ -178,6 +218,32 @@ pub enum AnyFieldDef {
     Time(FieldDef<Time>),
     /// A definition for Unix timestamps.
     Timestamp(FieldDef<Timestamp>),
+}
+
+impl AnyFieldDef {
+    /// Returns the definition's ID.
+    #[must_use]
+    pub const fn id(&self) -> FieldDefId {
+        match self {
+            AnyFieldDef::Text(def) => def.id(),
+            AnyFieldDef::Boolean(def) => def.id(),
+            AnyFieldDef::Integer(def) => def.id(),
+            AnyFieldDef::Date(def) => def.id(),
+            AnyFieldDef::Time(def) => def.id(),
+            AnyFieldDef::Timestamp(def) => def.id(),
+        }
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        match self {
+            AnyFieldDef::Text(def) => def.name(),
+            AnyFieldDef::Boolean(def) => def.name(),
+            AnyFieldDef::Integer(def) => def.name(),
+            AnyFieldDef::Date(def) => def.name(),
+            AnyFieldDef::Time(def) => def.name(),
+            AnyFieldDef::Timestamp(def) => def.name(),
+        }
+    }
 }
 
 impl self::sealed::Sealed for Text {}
