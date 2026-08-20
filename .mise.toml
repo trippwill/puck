@@ -1,3 +1,247 @@
+[settings]
+idiomatic_version_file_enable_tools = ["rust"]
+
 [tools]
-"cargo:licensesnip" = "1.7.0"
+"cargo:cargo-deny" = "0.20.2"
+"cargo:cargo-nextest" = "0.9.140"
+"pipx:reuse" = "6.2.0"
 mold = { version = "2.41.0", os = ["linux"] }
+
+[vars]
+appid = "dev.terranul.puck"
+name = "puck"
+
+[tasks.default]
+hide = true
+run = [{ task = "build-release" }]
+
+[tasks.clean]
+description = "Remove Cargo build artifacts"
+run = "cargo clean"
+
+[tasks.clean-vendor]
+description = "Remove vendored dependency artifacts"
+run = "rm -rf .cargo vendor vendor.tar"
+
+[tasks.clean-dist]
+description = "Remove build and vendored dependency artifacts"
+depends = ["clean", "clean-vendor"]
+
+[tasks.build-debug]
+description = "Build the debug profile"
+raw_args = true
+run = "cargo build --locked"
+
+[tasks.build-release]
+description = "Build the release profile"
+raw_args = true
+run = '''
+#!/bin/sh
+{% if os() == "linux" %}
+# Using mold linker
+export CARGO_PROFILE_RELEASE_LTO=off
+export RUSTFLAGS="-C link-arg=-fuse-ld=mold"
+{% endif %}
+exec cargo build --locked --release "$@"
+'''
+
+[tasks.build-vendored]
+description = "Build the release profile from vendored dependencies"
+depends = ["vendor-extract"]
+raw_args = true
+run = '''
+#!/bin/sh
+{% if os() == "linux" %}
+# Using mold linker
+export CARGO_PROFILE_RELEASE_LTO=off
+export RUSTFLAGS="-C link-arg=-fuse-ld=mold"
+{% endif %}
+exec cargo build --locked --release --frozen --offline "$@"
+'''
+
+[tasks.deny]
+description = "Check dependency advisories, licenses, bans, and sources"
+run = "cargo deny check --hide-inclusion-graph --allow no-license-field"
+
+[tasks.tasks-check]
+description = "Validate mise task definitions"
+run = "mise tasks validate --errors-only"
+
+[tasks.check]
+description = "Check task definitions, licensing, dependencies, and Rust lints"
+depends = ["tasks-check", "license-check", "deny"]
+raw_args = true
+run = '''
+#!/bin/sh
+exec cargo clippy --all-features --locked "$@" -- -W clippy::pedantic
+'''
+
+[tasks.check-json]
+description = "Run Clippy with unprefixed Cargo JSON output"
+raw = true
+run = "cargo clippy --all-features --locked --message-format=json -- -W clippy::pedantic"
+
+[tasks.pre-commit]
+description = "Check formatting, licensing, dependencies, tasks, and Rust lints"
+run = [{ task = "fmt", args = ["--check"] }, { task = "check" }]
+
+[tasks.'doc:open']
+description = "Open the project rust documentation in a web browser"
+run = "cargo doc --locked --no-deps --open"
+
+[tasks.ci]
+description = "Run the complete CI gate"
+run = [{ task = "pre-commit" }, { task = "test" }]
+
+[tasks.license-check]
+description = "Check attribution on tracked Puck source"
+run = "git ls-files -z -- src tests scripts | xargs -0 reuse lint-file"
+
+[tasks.license-add]
+description = "Add the Git user's copyright and MPL-2.0 to named source files"
+raw_args = true
+run = '''
+#!/bin/sh
+set -eu
+if [ "$#" -eq 0 ]; then
+    echo "license-add requires at least one file" >&2
+    exit 2
+fi
+name=$(git config --get user.name || :)
+email=$(git config --get user.email || :)
+if [ -z "$name" ] || [ -z "$email" ]; then
+    echo "license-add requires Git user.name and user.email" >&2
+    exit 2
+fi
+reuse annotate --template compact --copyright "$name <$email>" --license MPL-2.0 -- "$@"
+mise run license-check
+'''
+
+[tasks.fmt]
+description = "Format Rust source"
+raw_args = true
+run = '''
+#!/bin/sh
+exec cargo fmt --all "$@"
+'''
+
+[tasks.test]
+description = "Run release-profile tests"
+raw_args = true
+run = '''
+#!/bin/sh
+set -e
+{% if os() == "linux" %}
+# Using mold linker
+export CARGO_PROFILE_RELEASE_LTO=off
+export RUSTFLAGS="-C link-arg=-fuse-ld=mold"
+{% endif %}
+cargo nextest run --release --locked "$@"
+cargo test --doc --release --locked
+'''
+
+[tasks.app]
+description = "Run the release-profile libcomsic app"
+raw_args = true
+run = '''
+#!/bin/sh
+exec mise run run -- -- "$@"
+'''
+
+[tasks.ctl]
+description = "Run the release-profile puckctl binary"
+raw_args = true
+run = '''
+#!/bin/sh
+exec mise run run -- --bin puckctl -- "$@"
+'''
+
+[tasks.run]
+description = "Run a release-profile binary"
+interactive = true
+raw_args = true
+run = '''
+#!/bin/sh
+{% if os() == "linux" %}
+# Using mold linker
+export CARGO_PROFILE_RELEASE_LTO=off
+export RUSTFLAGS="-C link-arg=-fuse-ld=mold"
+{% endif %}
+export RUST_BACKTRACE=full
+exec cargo run --release --locked "$@"
+'''
+
+[tasks.install]
+description = "Install Puck into a filesystem tree"
+usage = '''
+flag "--destdir <path>" help="Staging root" env="DESTDIR" default=""
+flag "--prefix <path>" help="Installation prefix" env="PREFIX" default="/usr"
+'''
+run = '''
+#!/bin/sh
+set -eu
+prefix=/${usage_prefix#/}
+base=${usage_destdir%/}$prefix
+target=${CARGO_TARGET_DIR:-target}
+install -Dm0755 "$target/release/{{ vars.name }}" "$base/bin/{{ vars.name }}"
+install -Dm0644 "resources/app.desktop" "$base/share/applications/{{ vars.appid }}.desktop"
+install -Dm0644 "resources/app.metainfo.xml" "$base/share/metainfo/{{ vars.appid }}.metainfo.xml"
+install -Dm0644 "resources/icons/hicolor/scalable/apps/icon.svg" "$base/share/icons/hicolor/scalable/apps/{{ vars.appid }}.svg"
+'''
+
+[tasks.uninstall]
+description = "Remove Puck from a filesystem tree"
+usage = '''
+flag "--destdir <path>" help="Staging root" env="DESTDIR" default=""
+flag "--prefix <path>" help="Installation prefix" env="PREFIX" default="/usr"
+'''
+run = '''
+#!/bin/sh
+set -eu
+prefix=/${usage_prefix#/}
+base=${usage_destdir%/}$prefix
+rm -f \
+    "$base/bin/{{ vars.name }}" \
+    "$base/share/applications/{{ vars.appid }}.desktop" \
+    "$base/share/metainfo/{{ vars.appid }}.metainfo.xml" \
+    "$base/share/icons/hicolor/scalable/apps/{{ vars.appid }}.svg"
+'''
+
+[tasks.vendor]
+description = "Create a vendored dependency tarball"
+run = '''
+#!/bin/sh
+set -eu
+mkdir -p .cargo
+cargo vendor | head -n -1 > .cargo/config.toml
+echo 'directory = "vendor"' >> .cargo/config.toml
+tar pcf vendor.tar vendor
+rm -rf vendor
+'''
+
+[tasks.vendor-extract]
+description = "Extract vendored dependencies"
+run = '''
+rm -rf vendor
+tar pxf vendor.tar
+'''
+
+[tasks.tag]
+description = "Bump the Cargo version, commit it, and create an annotated tag"
+confirm = "Create release {{ usage.version }}?"
+usage = 'arg "<version>" help="Cargo package version"'
+run = '''
+#!/bin/sh
+set -eu
+version=${usage_version?}
+case "$version" in
+    *[!0-9A-Za-z.+-]* | "") echo "tag requires a valid Cargo version" >&2; exit 2 ;;
+esac
+find . -type f -name Cargo.toml -exec sed -i "0,/^version/s/^version.*/version = \"$version\"/" '{}' \;
+cargo check
+cargo clean
+find . -type f -name Cargo.toml -exec git add -- '{}' +
+git add Cargo.lock
+git commit -m "release: $version"
+git tag -a "$version" -m ""
+'''

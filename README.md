@@ -4,15 +4,17 @@ Dynamically structured notes
 
 ## Installation
 
-A [justfile](./justfile) is included by default for the [casey/just][just] command runner.
+Project commands are defined as [mise tasks][mise-tasks].
 
-- `just` builds the application with the default `just build-release` recipe
-- `just run` builds and runs the application
-- `just install` installs the project into the system
-- `just vendor` creates a vendored tarball
-- `just build-vendored` compiles with vendored dependencies from that tarball
-- `just check` adds missing MPL headers and runs clippy on the project
-- `just check-json` can be used by IDEs that support LSP
+- `mise run` builds the application with the default `build-release` task
+- `mise run run` builds and runs the application
+- `mise run install` installs the project into the system
+- `mise run vendor` creates a vendored tarball
+- `mise run build-vendored` compiles with vendored dependencies from that tarball
+- `mise run check` checks source attribution, dependencies, tasks, and Rust lints
+- `mise run check-json` emits Cargo JSON output for editors and other tools
+- `mise run pre-commit` runs the fast checks developers should run before committing
+- `mise run ci` runs the complete check and test gate
 
 ## Translators
 
@@ -20,29 +22,29 @@ A [justfile](./justfile) is included by default for the [casey/just][just] comma
 
 ## Packaging
 
-If packaging for a Linux distribution, vendor dependencies locally with the `vendor` rule, and build with the vendored sources using the `build-vendored` rule. When installing files, use the `rootdir` and `prefix` variables to change installation paths.
+If packaging for a Linux distribution, vendor dependencies locally with the `vendor` task, and build with the vendored sources using the `build-vendored` task. Set `DESTDIR` and `PREFIX` to change installation paths.
 
 ```sh
-just vendor
-just build-vendored
-just rootdir=debian/puck prefix=/usr install
+mise run vendor
+mise run build-vendored
+DESTDIR=debian/puck PREFIX=/usr mise run install
 ```
 
-It is recommended to build a source tarball with the vendored dependencies, which can typically be done by running `just vendor` on the host system before it enters the build environment.
+It is recommended to build a source tarball with the vendored dependencies, which can typically be done by running `mise run vendor` on the host system before it enters the build environment.
 
 ## Developers
 
 Developers should install [rustup][rustup] and [mise][mise], then run `mise install` to
 install the pinned auxiliary tools. Rustup uses [`rust-toolchain.toml`](./rust-toolchain.toml)
 to install the project's Rust toolchain, including rust-analyzer. To improve compilation
-times, configure [sccache][sccache] for use with Rust. Release recipes disable LTO so the
+times, configure [sccache][sccache] for use with Rust. Release tasks disable LTO so the
 mise-managed [mold][mold] linker can improve link times on Linux.
 
 [fluent]: https://projectfluent.org/
 [fluent-guide]: https://projectfluent.org/fluent/guide/hello.html
 [iso-codes]: https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes
-[just]: https://github.com/casey/just
 [mise]: https://mise.jdx.dev/
+[mise-tasks]: https://mise.jdx.dev/tasks/
 [rustup]: https://rustup.rs/
 [rust-analyzer]: https://rust-analyzer.github.io/
 [mold]: https://github.com/rui314/mold

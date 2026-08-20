@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 Charles Willis <5862883+trippwill@users.noreply.github.com>
 // SPDX-License-Identifier: MPL-2.0
 
 use std::collections::HashMap;
@@ -705,7 +706,8 @@ impl AppModel {
 
         let body: Element<_> = match (&self.selected_note, self.editing) {
             (Some(SelectedNote::Pile(note)), true) => {
-                let editor = widget::text_editor(&self.edit_draft).height(Length::Fill);
+                let editor =
+                    widget::text_editor::text_editor(&self.edit_draft).height(Length::Fill);
                 let editor = if self.busy {
                     editor
                 } else {
@@ -773,7 +775,7 @@ impl AppModel {
         let composer = widget::column::with_capacity(3)
             .push(widget::text::title3(fl!("new-note")))
             .push(
-                widget::text_editor(&self.draft)
+                widget::text_editor::text_editor(&self.draft)
                     .placeholder(fl!("note-placeholder"))
                     .height(140)
                     .on_action(Message::DraftEdited),

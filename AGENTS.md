@@ -4,19 +4,21 @@ API Compatibility is NOT a concern until there has been a release.
 
 ## Commands
 
-- Build release: `just` or `just build-release`
-- Build debug: `just build-debug`
-- Run the app: `just run`
-- Run the cli: `just run --bin puckctl`
-- Format: `just fmt`
-- Check formatting: `just fmt -- --check`
-- Lint: `just check`
-- Full tests: `just test`
-- Single test: `just test -- core::note::tests::empty_body_should_return_error`
-- Packaging/vendor flow: `just vendor`, then `just build-vendored`
+- Build release: `mise run` or `mise run build-release`
+- Build debug: `mise run build-debug`
+- Run the app: `mise run app`
+- Run the cli: `mise run ctl`
+- Format: `mise run fmt`
+- Check formatting: `mise run fmt -- --check`
+- Lint: `mise run check`
+- Pre-commit checks: `mise run pre-commit`
+- Complete validation: `mise run ci`
+- Full tests: `mise run test`
+- Single test: `mise run test -- core::note::tests::edit_should_increment_revision`
+- Packaging/vendor flow: `mise run vendor`, then `mise run build-vendored`
 
-Always use the `just fmt`, `just test`, and `just check` targets instead of invoking `cargo fmt`,
-`cargo test`, or `cargo clippy` directly. The recipes pass extra Cargo arguments through `*args` and
+Always use the `mise run fmt`, `mise run test`, and `mise run check` tasks instead of invoking
+`cargo fmt`, `cargo test`, or `cargo clippy` directly. The tasks pass extra Cargo arguments through and
 define the required toolchain, profile, features, and platform flags.
 
 ## Architecture
@@ -39,7 +41,7 @@ define the required toolchain, profile, features, and platform flags.
 - `src/bin/puckctl.rs` is a separate CLI binary using clap/tracing. It creates/checks documents and
   manages pile and archived notes under `document note`.
 - Localization is embedded from `i18n/` with `rust-embed` and `i18n-embed`; UI strings should use the exported `fl!` macro and entries in `i18n/en/puck.ftl`.
-- `resources/` plus `justfile` handle Linux desktop/appstream/icon installation. Keep packaging app IDs and `AppModel::APP_ID` aligned when changing identity/config behavior.
+- `resources/` plus `.mise.toml` handle Linux desktop/appstream/icon installation. Keep packaging app IDs and `AppModel::APP_ID` aligned when changing identity/config behavior.
 
 ## Conventions
 
