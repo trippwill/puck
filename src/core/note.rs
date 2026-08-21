@@ -4,7 +4,7 @@
 //! Immutable revisions of free-form notes.
 
 use thiserror::Error;
-use time::OffsetDateTime;
+use time::Timestamp;
 
 /// Note types.
 pub mod prelude {
@@ -76,8 +76,8 @@ pub struct Note<T: NoteState> {
     id: NoteId,
     body: String,
     revision: u32,
-    created_at: OffsetDateTime,
-    updated_at: OffsetDateTime,
+    created_at: Timestamp,
+    updated_at: Timestamp,
     _marker: std::marker::PhantomData<T>,
 }
 
@@ -85,7 +85,7 @@ impl Note<Pile> {
     /// Creates a new note with the given body.
     #[must_use]
     pub fn create(body: impl Into<String>) -> Self {
-        let now = OffsetDateTime::now_utc();
+        let now = now();
         Self {
             id: NoteId::new(),
             body: body.into(),
@@ -107,7 +107,7 @@ impl Note<Pile> {
             .revision
             .checked_add(1)
             .ok_or(NoteError::RevisionOverflow)?;
-        let updated_at = OffsetDateTime::now_utc();
+        let updated_at = now();
         Ok(Self {
             id: self.id,
             body: body.into(),
@@ -121,7 +121,7 @@ impl Note<Pile> {
     /// Recovers an uneditable note as a new identity at revision one.
     #[must_use]
     pub fn recover_revision_overflow(&self) -> Self {
-        let updated_at = OffsetDateTime::now_utc();
+        let updated_at = now();
         Self {
             id: NoteId::new(),
             body: self.body.clone(),
@@ -173,8 +173,8 @@ impl<T: NoteState> Note<T> {
         id: NoteId,
         body: String,
         revision: u32,
-        created_at: OffsetDateTime,
-        updated_at: OffsetDateTime,
+        created_at: Timestamp,
+        updated_at: Timestamp,
     ) -> Result<Self, NoteError> {
         if updated_at < created_at {
             return Err(NoteError::InvalidTimestamp);
@@ -212,13 +212,13 @@ impl<T: NoteState> Note<T> {
 
     /// Returns when the note was created.
     #[must_use]
-    pub fn created_at(&self) -> OffsetDateTime {
+    pub fn created_at(&self) -> Timestamp {
         self.created_at
     }
 
     /// Returns when this revision was created.
     #[must_use]
-    pub fn updated_at(&self) -> OffsetDateTime {
+    pub fn updated_at(&self) -> Timestamp {
         self.updated_at
     }
 }
@@ -233,7 +233,7 @@ pub struct NoteSummary {
     /// The source note revision.
     pub revision: u32,
     /// The source note's update timestamp.
-    pub updated_at: OffsetDateTime,
+    pub updated_at: Timestamp,
 }
 
 impl<T: NoteState> From<&Note<T>> for NoteSummary {
@@ -254,6 +254,12 @@ impl<T: NoteState> From<&Note<T>> for NoteSummary {
     }
 }
 
+fn now() -> Timestamp {
+    let now = Timestamp::now();
+    Timestamp::from_milliseconds(now.as_milliseconds())
+        .expect("the current timestamp remains valid at millisecond precision")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,7 +271,7 @@ mod tests {
         let updated_note = note.edit("Updated body").expect("valid edit");
         assert_eq!(updated_note.revision(), note.revision() + 1);
         assert_eq!(updated_note.body(), "Updated body");
-        assert!(updated_note.updated_at() > note.updated_at());
+        assert!(updated_note.updated_at() >= note.updated_at());
         assert_eq!(updated_note.created_at(), note.created_at());
         assert_eq!(updated_note.id(), note.id());
     }
@@ -282,7 +288,7 @@ mod tests {
     #[test]
     fn restore_revision_zero_should_return_error() {
         let body = "Some body".to_string();
-        let created_at = OffsetDateTime::now_utc();
+        let created_at = now();
         let updated_at = created_at;
         let result = PileNote::restore(NoteId::new(), body, 0, created_at, updated_at);
         assert!(matches!(result, Err(NoteError::InvalidRevision)));
@@ -291,7 +297,7 @@ mod tests {
     #[test]
     fn restore_validates_timestamps_and_preserves_data() {
         let id = NoteId::new();
-        let created_at = OffsetDateTime::now_utc();
+        let created_at = now();
         let updated_at = created_at + time::Duration::SECOND;
 
         assert!(matches!(
@@ -363,7 +369,7 @@ mod tests {
         assert_eq!(recovered_note.revision(), 1);
         assert_eq!(recovered_note.body(), overflowed_note.body());
         assert_eq!(recovered_note.created_at(), overflowed_note.created_at());
-        assert!(recovered_note.updated_at() > overflowed_note.updated_at());
+        assert!(recovered_note.updated_at() >= overflowed_note.updated_at());
     }
 
     #[test]

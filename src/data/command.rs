@@ -88,8 +88,8 @@ impl Command {
                 *note.id().as_uuid(),
                 note.body().to_owned(),
                 note.revision(),
-                note.created_at(),
-                note.updated_at()
+                note.created_at().as_milliseconds(),
+                note.updated_at().as_milliseconds()
             ],
         )
     }
@@ -105,7 +105,7 @@ impl Command {
                 *note.id().as_uuid(),
                 note.body(),
                 note.revision(),
-                note.updated_at()
+                note.updated_at().as_milliseconds()
             ],
         )?;
 

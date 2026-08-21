@@ -31,8 +31,6 @@ pub enum DocumentError {
     UnsupportedVersion(PathBuf, SchemaVersion, SchemaVersion),
     #[error("No migration path for file {0}: cannot upgrade from {1} to {2}")]
     MigrationUnavailable(PathBuf, SchemaVersion, SchemaVersion),
-    #[error("Invalid embedded migration registry")]
-    InvalidMigrationRegistry,
     #[error("Invalid persisted note: {0}")]
     InvalidNote(#[from] NoteError),
 }
@@ -234,7 +232,6 @@ async fn migrate_connection(
 
 fn migration_error(path: &Path, error: mig::MigrationError) -> DocumentError {
     match error {
-        mig::MigrationError::InvalidRegistry => DocumentError::InvalidMigrationRegistry,
         mig::MigrationError::Sqlite(error) => error.into(),
         mig::MigrationError::UnregisteredVersion(version) => {
             DocumentError::MigrationUnavailable(path.to_path_buf(), version, mig::CURRENT_VERSION)
@@ -287,7 +284,7 @@ impl Drop for Document {
 mod tests {
     use std::path::Path;
 
-    use time::{Month, OffsetDateTime};
+    use time::{Month, Timestamp as TimeTimestamp};
     use tokio_rusqlite::params;
 
     use super::*;
@@ -337,6 +334,21 @@ mod tests {
             validate_header(Path::new("future.puck"), &header),
             Err(DocumentError::UnsupportedVersion(_, supported, found))
                 if supported == mig::CURRENT_VERSION && found == future_version
+        ));
+    }
+
+    #[test]
+    fn version_before_minimum_is_rejected() {
+        let old_version = SchemaVersion::new(0, 0, 3);
+        let header = DocumentHeader {
+            application_id: APPLICATION_ID,
+            version: old_version,
+        };
+
+        assert!(matches!(
+            validate_header(Path::new("old.puck"), &header),
+            Err(DocumentError::VersionError(_, minimum, found))
+                if minimum == mig::MINIMUM_COMPATIBLE_VERSION && found == old_version
         ));
     }
 
@@ -396,7 +408,7 @@ mod tests {
     async fn notes_round_trip_and_list_by_update_time() {
         let path = std::env::temp_dir().join(format!("puck-{}.db", uuid::Uuid::now_v7()));
         let document = Document::create(&path).await.unwrap();
-        let now = OffsetDateTime::now_utc();
+        let now = TimeTimestamp::from_milliseconds(TimeTimestamp::now().as_milliseconds()).unwrap();
         let older = PileNote::restore(
             NoteId::new(),
             String::from("Older\nsecond line"),
@@ -446,8 +458,8 @@ mod tests {
                             row.get::<_, uuid::Uuid>(0)?,
                             row.get::<_, String>(1)?,
                             row.get::<_, u32>(2)?,
-                            row.get::<_, OffsetDateTime>(3)?,
-                            row.get::<_, OffsetDateTime>(4)?,
+                            row.get::<_, i64>(3)?,
+                            row.get::<_, i64>(4)?,
                             row.get::<_, i64>(5)?,
                         ))
                     },
@@ -458,8 +470,8 @@ mod tests {
         assert_eq!(row.0, *older_id.as_uuid());
         assert_eq!(row.1, older.body());
         assert_eq!(row.2, older.revision());
-        assert_eq!(row.3, older.created_at());
-        assert_eq!(row.4, older.updated_at());
+        assert_eq!(row.3, older.created_at().as_milliseconds());
+        assert_eq!(row.4, older.updated_at().as_milliseconds());
         assert_eq!(row.5, 0);
 
         drop(document);
@@ -1012,7 +1024,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("puck-{}.db", uuid::Uuid::now_v7()));
         let document = Document::create(&path).await.unwrap();
         let id = uuid::Uuid::now_v7();
-        let now = OffsetDateTime::now_utc();
+        let now = TimeTimestamp::now().as_milliseconds();
 
         document
             .conn

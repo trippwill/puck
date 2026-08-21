@@ -17,12 +17,9 @@ use tokio_rusqlite::rusqlite::{
 
 use super::version::SchemaVersion;
 
-pub(super) const BASELINE_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 0);
-const STRUCTURED_DATA_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 1);
-const STRUCTURED_DELETION_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 2);
-const NOTE_DELETION_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 3);
-pub(super) const CURRENT_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 4);
-pub(super) const MINIMUM_COMPATIBLE_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 0);
+pub(super) const BASELINE_VERSION: SchemaVersion = SchemaVersion::new(0, 1, 0);
+pub(super) const CURRENT_VERSION: SchemaVersion = SchemaVersion::new(0, 1, 1);
+pub(super) const MINIMUM_COMPATIBLE_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 4);
 
 #[derive(Clone, Copy)]
 struct Migration {
@@ -37,22 +34,13 @@ impl Migration {
 }
 
 const MIGRATIONS: &[Migration] = &[
-    Migration::new(BASELINE_VERSION, include_str!("migrations/0.0.0.sql")),
-    Migration::new(
-        STRUCTURED_DATA_VERSION,
-        include_str!("migrations/0.0.1.sql"),
-    ),
-    Migration::new(
-        STRUCTURED_DELETION_VERSION,
-        include_str!("migrations/0.0.2.sql"),
-    ),
-    Migration::new(NOTE_DELETION_VERSION, include_str!("migrations/0.0.3.sql")),
-    Migration::new(CURRENT_VERSION, include_str!("migrations/0.0.4.sql")),
+    Migration::new(MINIMUM_COMPATIBLE_VERSION, ""),
+    Migration::new(BASELINE_VERSION, include_str!("migrations/0.1.0.sql")),
+    Migration::new(CURRENT_VERSION, include_str!("migrations/0.1.1.sql")),
 ];
 
 #[derive(Debug)]
 pub(super) enum MigrationError {
-    InvalidRegistry,
     Sqlite(SqlError),
     UnregisteredVersion(SchemaVersion),
 }
@@ -64,14 +52,14 @@ impl From<SqlError> for MigrationError {
 }
 
 pub(super) fn initialize(tx: &Transaction<'_>) -> Result<SchemaVersion, MigrationError> {
-    initialize_with(tx, production_migrations()?)
+    initialize_with(tx, MIGRATIONS)
 }
 
 pub(super) fn migrate(
     conn: &mut SyncConnection,
     from: SchemaVersion,
 ) -> Result<SchemaVersion, MigrationError> {
-    migrate_with(conn, from, production_migrations()?)
+    migrate_with(conn, from, MIGRATIONS)
 }
 
 fn migrate_with(
@@ -79,11 +67,9 @@ fn migrate_with(
     from: SchemaVersion,
     migrations: &[Migration],
 ) -> Result<SchemaVersion, MigrationError> {
-    validate_registry(migrations)?;
-
     let current = migrations
         .last()
-        .expect("validated migration registry is not empty")
+        .expect("migration registry is not empty")
         .version;
     let index = migrations
         .iter()
@@ -106,12 +92,11 @@ fn initialize_with(
     tx: &Transaction<'_>,
     migrations: &[Migration],
 ) -> Result<SchemaVersion, MigrationError> {
-    validate_registry(migrations)?;
     apply(tx, migrations)?;
 
     let current = migrations
         .last()
-        .expect("validated migration registry is not empty")
+        .expect("migration registry is not empty")
         .version;
     tx.pragma_update(None, "user_version", i32::from(current))?;
     Ok(current)
@@ -119,47 +104,13 @@ fn initialize_with(
 
 fn apply(tx: &Transaction<'_>, migrations: &[Migration]) -> SqlResult<()> {
     for migration in migrations {
+        tracing::debug!(version = %migration.version, "Applying schema migration");
         tx.execute_batch(migration.sql)?;
     }
     Ok(())
 }
 
-fn production_migrations() -> Result<&'static [Migration], MigrationError> {
-    validate_registry(MIGRATIONS)?;
-
-    let first = MIGRATIONS
-        .first()
-        .expect("validated migration registry is not empty");
-    let last = MIGRATIONS
-        .last()
-        .expect("validated migration registry is not empty");
-
-    if first.version != BASELINE_VERSION
-        || last.version != CURRENT_VERSION
-        || !MIGRATIONS
-            .iter()
-            .any(|migration| migration.version == MINIMUM_COMPATIBLE_VERSION)
-        || MIGRATIONS
-            .iter()
-            .any(|migration| !migration_sql_is_safe(migration.sql))
-    {
-        return Err(MigrationError::InvalidRegistry);
-    }
-
-    Ok(MIGRATIONS)
-}
-
-fn validate_registry(migrations: &[Migration]) -> Result<(), MigrationError> {
-    if migrations.is_empty()
-        || migrations
-            .windows(2)
-            .any(|pair| pair[0].version >= pair[1].version)
-    {
-        return Err(MigrationError::InvalidRegistry);
-    }
-    Ok(())
-}
-
+#[cfg(test)]
 fn migration_sql_is_safe(sql: &str) -> bool {
     const FORBIDDEN: &[&str] = &[
         "ATTACH",
@@ -202,14 +153,6 @@ mod tests {
         SchemaVersion::from(raw)
     }
 
-    fn normalize_sql(sql: &str) -> String {
-        sql.split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .trim_end_matches(';')
-            .to_owned()
-    }
-
     #[test]
     fn baseline_creates_current_schema() {
         let mut conn = SyncConnection::open_in_memory().unwrap();
@@ -217,27 +160,107 @@ mod tests {
         assert_eq!(initialize(&tx).unwrap(), CURRENT_VERSION);
         tx.commit().unwrap();
 
-        let schema = conn
-            .query_row(
-                "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'notes'",
-                [],
-                |row| row.get::<_, String>(0),
+        let objects = conn
+            .prepare(
+                r"
+                SELECT name
+                FROM sqlite_schema
+                WHERE type IN ('table', 'index') AND name NOT LIKE 'sqlite_%'
+                ORDER BY name
+                ",
             )
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<SqlResult<Vec<_>>>()
             .unwrap();
-        let baseline = MIGRATIONS[0]
-            .sql
-            .split_once("CREATE TABLE")
-            .map(|(_, sql)| format!("CREATE TABLE{sql}"))
-            .unwrap();
-        let columns = baseline
-            .trim()
-            .strip_suffix(") STRICT;")
-            .expect("baseline notes table is strict");
-        let expected = format!(
-            "{columns}, deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1))) STRICT"
+        assert_eq!(
+            objects,
+            [
+                "collections",
+                "field_defs",
+                "fields",
+                "fields_by_definition",
+                "notes",
+                "records",
+                "records_by_collection",
+            ]
         );
+        assert_eq!(user_version(&conn), CURRENT_VERSION);
+    }
 
-        assert_eq!(normalize_sql(&schema), normalize_sql(&expected));
+    #[test]
+    fn minimum_compatible_document_migrates_without_losing_data() {
+        let mut conn = SyncConnection::open_in_memory().unwrap();
+        let id = vec![0_u8; 16];
+        conn.execute_batch(
+            r"
+            CREATE TABLE notes (
+                id BLOB PRIMARY KEY NOT NULL,
+                body TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL CHECK (updated_at >= created_at),
+                archived INTEGER NOT NULL DEFAULT 0,
+                deleted INTEGER NOT NULL DEFAULT 0
+            ) STRICT;
+            ",
+        )
+        .unwrap();
+        conn.execute(
+            r"
+            INSERT INTO notes (
+                id, body, revision, created_at, updated_at, archived, deleted
+            )
+            VALUES (
+                ?1,
+                'Keep me',
+                1,
+                '2026-08-18 14:15:40.601255975+00:00',
+                '2026-08-18 14:15:41.701255975+00:00',
+                0,
+                0
+            )
+            ",
+            [&id],
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", i32::from(MINIMUM_COMPATIBLE_VERSION))
+            .unwrap();
+
+        assert_eq!(
+            migrate(&mut conn, MINIMUM_COMPATIBLE_VERSION).unwrap(),
+            CURRENT_VERSION
+        );
+        assert_eq!(
+            conn.query_row(
+                r"
+                SELECT
+                    body,
+                    typeof(created_at),
+                    typeof(updated_at),
+                    updated_at > created_at
+                FROM notes
+                WHERE id = ?1
+                ",
+                [&id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, bool>(3)?,
+                    ))
+                },
+            )
+            .unwrap(),
+            (
+                String::from("Keep me"),
+                String::from("integer"),
+                String::from("integer"),
+                true,
+            )
+        );
         assert_eq!(user_version(&conn), CURRENT_VERSION);
     }
 
@@ -306,11 +329,21 @@ mod tests {
 
     #[test]
     fn production_registry_is_valid_and_transaction_safe() {
-        let migrations = production_migrations().unwrap();
+        let migrations = MIGRATIONS;
 
-        assert_eq!(migrations.first().unwrap().version, BASELINE_VERSION);
+        assert!(!migrations.is_empty());
+        assert!(
+            !migrations
+                .windows(2)
+                .any(|pair| pair[0].version >= pair[1].version)
+        );
+        assert_eq!(
+            migrations.first().unwrap().version,
+            MINIMUM_COMPATIBLE_VERSION
+        );
         assert_eq!(migrations.last().unwrap().version, CURRENT_VERSION);
-        assert!(BASELINE_VERSION <= MINIMUM_COMPATIBLE_VERSION);
+        assert!(MINIMUM_COMPATIBLE_VERSION <= BASELINE_VERSION);
+        assert!(BASELINE_VERSION <= CURRENT_VERSION);
         assert!(MINIMUM_COMPATIBLE_VERSION <= CURRENT_VERSION);
         assert!(
             migrations

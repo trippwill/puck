@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Charles Willis <5862883+trippwill@users.noreply.github.com>
 // SPDX-License-Identifier: MPL-2.0
 
-use time::OffsetDateTime;
+use time::Timestamp;
 use tokio_rusqlite::{Row, rusqlite};
 
 use crate::core::{ArchiveNote, NoteError, NoteId, PileNote};
@@ -14,8 +14,8 @@ pub struct StoredNote {
     id: uuid::Uuid,
     body: String,
     revision: u32,
-    created_at: OffsetDateTime,
-    updated_at: OffsetDateTime,
+    created_at: Timestamp,
+    updated_at: Timestamp,
 }
 
 impl StoredNote {
@@ -24,8 +24,8 @@ impl StoredNote {
             id: row.get("id")?,
             body: row.get("body")?,
             revision: row.get("revision")?,
-            created_at: row.get("created_at")?,
-            updated_at: row.get("updated_at")?,
+            created_at: timestamp(row, 3)?,
+            updated_at: timestamp(row, 4)?,
         })
     }
 
@@ -48,4 +48,14 @@ impl StoredNote {
             self.updated_at,
         )
     }
+}
+
+fn timestamp(row: &Row<'_>, column: usize) -> rusqlite::Result<Timestamp> {
+    Timestamp::from_milliseconds(row.get(column)?).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            column,
+            rusqlite::types::Type::Integer,
+            Box::new(error),
+        )
+    })
 }
