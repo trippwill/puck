@@ -197,7 +197,7 @@ mod tests {
         let raw = conn
             .pragma_query_value(None, "user_version", |row| row.get::<_, i32>(0))
             .unwrap();
-        SchemaVersion::from_i32(raw)
+        SchemaVersion::from(raw)
     }
 
     fn normalize_sql(sql: &str) -> String {

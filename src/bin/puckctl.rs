@@ -486,11 +486,11 @@ async fn run_field(document: &Document, command: FieldCommands) -> Result<(), Cl
                 .await?
                 .ok_or_else(|| not_found("Field definition", definition.to_string()))?;
             document
-                .query(FieldByKey((record, definition)))
+                .query(FieldByKey(FieldKey(record, definition)))
                 .await?
                 .ok_or_else(|| not_found("Field", format!("{record}/{definition}")))?;
             document
-                .execute(vec![Command::DeleteField((record, definition))])
+                .execute(vec![Command::DeleteField(FieldKey(record, definition))])
                 .await?;
         }
         FieldCommands::Set {
@@ -573,7 +573,7 @@ async fn run_field(document: &Document, command: FieldCommands) -> Result<(), Cl
                 .await?
                 .ok_or_else(|| not_found("Field definition", definition.to_string()))?;
             let field = document
-                .query(FieldByKey((record, definition)))
+                .query(FieldByKey(FieldKey(record, definition)))
                 .await?
                 .ok_or_else(|| not_found("Field", format!("{record}/{definition}")))?;
             print!("{}", field_value(&field));

@@ -243,12 +243,12 @@ impl Query for FieldDefs {
 }
 
 /// A query for a field by its record and definition IDs.
-pub struct FieldByKey(pub (RecordId, FieldDefId));
+pub struct FieldByKey(pub FieldKey);
 impl Query for FieldByKey {
     type Output = Option<AnyField>;
 
     fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
-        let (record_id, def_id) = self.0;
+        let FieldKey(record_id, def_id) = self.0;
         conn.query_row(
             r"
             SELECT record_id, field_def_id, type, value

@@ -21,11 +21,12 @@ pub mod prelude {
 pub use self::prelude::*;
 
 #[derive(Debug, thiserror::Error)]
-pub enum SqlFieldKindError {
+pub(crate) enum SqlFieldTypeError {
     #[error("invalid field kind: {0}")]
     InvalidKind(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SqlFieldType {
     Text,
     Boolean,
@@ -35,8 +36,8 @@ pub(crate) enum SqlFieldType {
     Timestamp,
 }
 
-impl SqlFieldType {
-    pub(crate) fn as_str(&self) -> &'static str {
+impl AsRef<str> for SqlFieldType {
+    fn as_ref(&self) -> &str {
         match self {
             SqlFieldType::Text => "text",
             SqlFieldType::Boolean => "boolean",
@@ -49,7 +50,7 @@ impl SqlFieldType {
 }
 
 impl std::str::FromStr for SqlFieldType {
-    type Err = SqlFieldKindError;
+    type Err = SqlFieldTypeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -59,14 +60,14 @@ impl std::str::FromStr for SqlFieldType {
             "date" => Ok(SqlFieldType::Date),
             "time" => Ok(SqlFieldType::Time),
             "timestamp" => Ok(SqlFieldType::Timestamp),
-            _ => Err(SqlFieldKindError::InvalidKind(s.to_string())),
+            _ => Err(SqlFieldTypeError::InvalidKind(s.to_string())),
         }
     }
 }
 
 impl tokio_rusqlite::ToSql for SqlFieldType {
     fn to_sql(&self) -> tokio_rusqlite::rusqlite::Result<tokio_rusqlite::types::ToSqlOutput<'_>> {
-        Ok(tokio_rusqlite::types::ToSqlOutput::from(self.as_str()))
+        Ok(tokio_rusqlite::types::ToSqlOutput::from(self.as_ref()))
     }
 }
 

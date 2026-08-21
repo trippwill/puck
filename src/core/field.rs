@@ -22,6 +22,7 @@ pub mod prelude {
         Field,
         FieldDef,
         FieldDefId,
+        FieldKey,
         FieldType,
         Integer,
         Text,
@@ -75,6 +76,10 @@ pub struct Field<T: FieldType> {
     value: T::Value,
 }
 
+/// A unique key for a [`Field`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FieldKey(pub RecordId, pub FieldDefId);
+
 impl<T: FieldType> Field<T> {
     pub(crate) fn new(def: &FieldDef<T>, record: &Record, value: T::Value) -> Self {
         Self {
@@ -96,8 +101,8 @@ impl<T: FieldType> Field<T> {
 
     /// Returns the field's record and definition IDs.
     #[must_use]
-    pub const fn key(&self) -> (RecordId, FieldDefId) {
-        (self.record_id, self.def_id)
+    pub const fn key(&self) -> FieldKey {
+        FieldKey(self.record_id, self.def_id)
     }
 
     /// Returns a reference to the field's value.
@@ -144,10 +149,17 @@ impl AnyField {
         }
     }
 
-    /// Returns the field's record and definition IDs.
+    /// Returns the field's unique key.
     #[must_use]
-    pub const fn key(&self) -> (RecordId, FieldDefId) {
-        (self.record_id(), self.def_id())
+    pub const fn key(&self) -> FieldKey {
+        match self {
+            AnyField::Text(f) => f.key(),
+            AnyField::Boolean(f) => f.key(),
+            AnyField::Integer(f) => f.key(),
+            AnyField::Date(f) => f.key(),
+            AnyField::Time(f) => f.key(),
+            AnyField::Timestamp(f) => f.key(),
+        }
     }
 }
 

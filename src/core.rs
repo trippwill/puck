@@ -60,12 +60,6 @@ macro_rules! uuidv7_id {
             }
         }
 
-        impl AsRef<uuid::Uuid> for $name {
-            fn as_ref(&self) -> &uuid::Uuid {
-                self.as_uuid()
-            }
-        }
-
         impl std::fmt::Display for $name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 self.0.fmt(f)

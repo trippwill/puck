@@ -12,6 +12,7 @@ pub struct SchemaVersion {
 }
 
 impl SchemaVersion {
+    /// Creates a new schema version with the given major, minor, and migration numbers.
     #[must_use]
     pub const fn new(major: u8, minor: u8, migration: u16) -> Self {
         Self {
@@ -22,7 +23,7 @@ impl SchemaVersion {
     }
 
     #[must_use]
-    pub fn from_i32(raw: i32) -> Self {
+    fn from_i32(raw: i32) -> Self {
         let raw = raw.cast_unsigned(); // Convert to u32 to avoid sign issues
         let major = ((raw >> 24) & 0xFF) as u8;
         let minor = ((raw >> 16) & 0xFF) as u8;
@@ -35,44 +36,29 @@ impl SchemaVersion {
     }
 
     #[must_use]
-    pub fn as_i32(&self) -> i32 {
+    fn as_i32(self) -> i32 {
         let raw = ((u32::from(self.major)) << 24)
             | ((u32::from(self.minor)) << 16)
             | (u32::from(self.migration));
         raw.cast_signed()
     }
 
-    #[must_use]
-    pub fn as_u32(&self) -> u32 {
-        ((u32::from(self.major)) << 24)
-            | ((u32::from(self.minor)) << 16)
-            | (u32::from(self.migration))
-    }
-
+    /// Returns the major version number.
     #[must_use]
     pub fn major(&self) -> u8 {
         self.major
     }
 
+    /// Returns the minor version number.
     #[must_use]
     pub fn minor(&self) -> u8 {
         self.minor
     }
 
+    /// Returns the migration version number.
     #[must_use]
     pub fn migration(&self) -> u16 {
         self.migration
-    }
-
-    #[must_use]
-    pub fn triple(&self) -> (u8, u8, u16) {
-        (self.major, self.minor, self.migration)
-    }
-}
-
-impl From<SchemaVersion> for String {
-    fn from(version: SchemaVersion) -> Self {
-        format!("{}.{}.{}", version.major, version.minor, version.migration)
     }
 }
 
@@ -99,12 +85,6 @@ impl FromStr for SchemaVersion {
     }
 }
 
-impl From<(u8, u8, u16)> for SchemaVersion {
-    fn from(triple: (u8, u8, u16)) -> Self {
-        Self::new(triple.0, triple.1, triple.2)
-    }
-}
-
 impl From<i32> for SchemaVersion {
     fn from(raw: i32) -> Self {
         Self::from_i32(raw)
@@ -117,30 +97,10 @@ impl From<SchemaVersion> for i32 {
     }
 }
 
-impl From<SchemaVersion> for u32 {
-    fn from(version: SchemaVersion) -> Self {
-        version.as_u32()
-    }
-}
-
 impl Display for SchemaVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}.{}.{}", self.major, self.minor, self.migration)
     }
-}
-
-fn check<T>()
-where
-    T: std::fmt::Debug
-        + std::fmt::Display
-        + std::cmp::PartialEq
-        + std::cmp::PartialOrd
-        + std::clone::Clone
-        + std::marker::Copy
-        + From<i32>
-        + Into<i32>
-        + Into<u32>,
-{
 }
 
 #[cfg(test)]
@@ -159,12 +119,11 @@ mod tests {
     }
 
     #[test]
-    fn test_signed_and_unsigned_encodings_use_the_same_bytes() {
+    fn test_signed_encodings_use_the_same_bytes() {
         let version = SchemaVersion::new(0x80, 0x12, 0x3456);
         let expected = [0x80, 0x12, 0x34, 0x56];
 
         assert_eq!(version.as_i32().to_be_bytes(), expected);
-        assert_eq!(version.as_u32().to_be_bytes(), expected);
     }
 
     #[test]
@@ -190,14 +149,11 @@ mod tests {
     }
 
     #[test]
-    fn test_string_and_tuple_conversions() {
+    fn test_string_conversions() {
         let version = SchemaVersion::new(1, 2, 345);
 
         assert_eq!(version.to_string(), "1.2.345");
-        assert_eq!(String::from(version), "1.2.345");
         assert_eq!("1.2.345".parse(), Ok(version));
-        assert_eq!(SchemaVersion::from((1, 2, 345)), version);
-        assert_eq!(version.triple(), (1, 2, 345));
     }
 
     #[test]
@@ -219,10 +175,5 @@ mod tests {
                 "{input} should be rejected"
             );
         }
-    }
-
-    #[test]
-    fn test_version_traits() {
-        check::<SchemaVersion>();
     }
 }

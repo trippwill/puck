@@ -184,7 +184,7 @@ async fn prepare_connection(
 
         Ok(DocumentHeader {
             application_id,
-            version: SchemaVersion::from_i32(user_version),
+            version: SchemaVersion::from(user_version),
         })
     })
     .await?
@@ -360,7 +360,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(application_id, APPLICATION_ID);
-        assert_eq!(SchemaVersion::from_i32(user_version), mig::CURRENT_VERSION);
+        assert_eq!(SchemaVersion::from(user_version), mig::CURRENT_VERSION);
         drop(document);
         std::fs::remove_file(path).unwrap();
     }
@@ -386,7 +386,7 @@ mod tests {
             .call(|conn| conn.pragma_query_value(None, "user_version", |row| row.get::<_, i32>(0)))
             .await
             .unwrap();
-        assert_eq!(SchemaVersion::from_i32(user_version), mig::CURRENT_VERSION);
+        assert_eq!(SchemaVersion::from(user_version), mig::CURRENT_VERSION);
 
         drop(document);
         std::fs::remove_file(path).unwrap();
@@ -686,35 +686,35 @@ mod tests {
         ));
         assert!(matches!(
             document
-                .query(FieldByKey((record_id, boolean_id)))
+                .query(FieldByKey(FieldKey(record_id, boolean_id)))
                 .await
                 .unwrap(),
             Some(AnyField::Boolean(field)) if *field.val()
         ));
         assert!(matches!(
             document
-                .query(FieldByKey((record_id, integer_id)))
+                .query(FieldByKey(FieldKey(record_id, integer_id)))
                 .await
                 .unwrap(),
             Some(AnyField::Integer(field)) if *field.val() == -42
         ));
         assert!(matches!(
             document
-                .query(FieldByKey((record_id, date_id)))
+                .query(FieldByKey(FieldKey(record_id, date_id)))
                 .await
                 .unwrap(),
             Some(AnyField::Date(field)) if *field.val() == date
         ));
         assert!(matches!(
             document
-                .query(FieldByKey((record_id, time_id)))
+                .query(FieldByKey(FieldKey(record_id, time_id)))
                 .await
                 .unwrap(),
             Some(AnyField::Time(field)) if *field.val() == time
         ));
         assert!(matches!(
             document
-                .query(FieldByKey((record_id, timestamp_id)))
+                .query(FieldByKey(FieldKey(record_id, timestamp_id)))
                 .await
                 .unwrap(),
             Some(AnyField::Timestamp(field)) if *field.val() == timestamp
@@ -745,7 +745,7 @@ mod tests {
         );
         assert!(
             document
-                .query(FieldByKey((record_id, FieldDefId::new())))
+                .query(FieldByKey(FieldKey(record_id, FieldDefId::new())))
                 .await
                 .unwrap()
                 .is_none()
@@ -768,13 +768,13 @@ mod tests {
             .unwrap();
         assert!(
             document
-                .query(FieldByKey((record_id, boolean_id)))
+                .query(FieldByKey(FieldKey(record_id, boolean_id)))
                 .await
                 .is_err()
         );
         assert!(
             document
-                .query(FieldByKey((record_id, timestamp_id)))
+                .query(FieldByKey(FieldKey(record_id, timestamp_id)))
                 .await
                 .is_err()
         );

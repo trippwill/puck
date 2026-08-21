@@ -35,7 +35,7 @@ pub enum Command {
     /// Marks a field definition and its values for deletion.
     DeleteFieldDef(FieldDefId),
     /// Marks a field value for deletion.
-    DeleteField((RecordId, FieldDefId)),
+    DeleteField(FieldKey),
     /// Permanently removes structured data marked for deletion.
     Clean,
 }
@@ -249,10 +249,8 @@ impl Command {
         Ok(changed)
     }
 
-    fn delete_field(
-        tx: &Transaction,
-        (record_id, def_id): (RecordId, FieldDefId),
-    ) -> SqlResult<usize> {
+    fn delete_field(tx: &Transaction, key: FieldKey) -> SqlResult<usize> {
+        let FieldKey(record_id, def_id) = key;
         let changed = tx.execute(
             r"
             UPDATE fields
