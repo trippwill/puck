@@ -16,6 +16,23 @@ Project commands are defined as [mise tasks][mise-tasks].
 - `mise run pre-commit` runs the fast checks developers should run before committing
 - `mise run ci` runs the complete check and test gate
 
+## Command-line usage
+
+`puckctl` takes the document path before its command. Commands that create objects print IDs that
+can be passed to later commands:
+
+```sh
+mise run ctl -- notes.puck new
+note_id=$(mise run ctl -- notes.puck note add "Remember this")
+mise run ctl -- notes.puck note read "$note_id"
+
+collection_id=$(mise run ctl -- notes.puck collection add Tasks)
+record_id=$(mise run ctl -- notes.puck record add "$collection_id")
+title_id=$(mise run ctl -- notes.puck field-def add text Title)
+mise run ctl -- notes.puck field set "$record_id" "$title_id" "Ship Puck"
+mise run ctl -- notes.puck field read "$record_id" "$title_id"
+```
+
 ## Translators
 
 [Fluent][fluent] is used for localization of the software. Fluent's translation files are found in the [i18n directory](./i18n). New translations may copy the [English (en) localization](./i18n/en) of the project, rename `en` to the desired [ISO 639-1 language code][iso-codes], and then translations can be provided for each [message identifier][fluent-guide]. If no translation is necessary, the message may be omitted.
