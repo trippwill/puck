@@ -23,7 +23,7 @@ jobs:
       - uses: jdx/mise-action@v4
         with:
           version: 2026.8.10
-          install_args: rust cargo-binstall
+          install_args: rust aqua:cargo-bins/cargo-binstall
       - uses: Swatinem/rust-cache@v2
       - run: mise install
       - run: mise run ci
