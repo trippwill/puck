@@ -8,12 +8,19 @@
 //! and the resulting version are committed together, so a failed chain leaves
 //! the document unchanged. Applied migration files are immutable.
 
-use tokio_rusqlite::rusqlite::{self, Connection, Transaction};
+use tokio_rusqlite::Transaction;
+use tokio_rusqlite::rusqlite::{
+    Connection as SyncConnection,
+    Error as SqlError,
+    Result as SqlResult,
+};
 
 use super::version::SchemaVersion;
 
 pub(super) const BASELINE_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 0);
-pub(super) const CURRENT_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 1);
+const STRUCTURED_DATA_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 1);
+const STRUCTURED_DELETION_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 2);
+pub(super) const CURRENT_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 3);
 pub(super) const MINIMUM_COMPATIBLE_VERSION: SchemaVersion = SchemaVersion::new(0, 0, 0);
 
 #[derive(Clone, Copy)]
@@ -30,18 +37,26 @@ impl Migration {
 
 const MIGRATIONS: &[Migration] = &[
     Migration::new(BASELINE_VERSION, include_str!("migrations/0.0.0.sql")),
-    Migration::new(CURRENT_VERSION, include_str!("migrations/0.0.1.sql")),
+    Migration::new(
+        STRUCTURED_DATA_VERSION,
+        include_str!("migrations/0.0.1.sql"),
+    ),
+    Migration::new(
+        STRUCTURED_DELETION_VERSION,
+        include_str!("migrations/0.0.2.sql"),
+    ),
+    Migration::new(CURRENT_VERSION, include_str!("migrations/0.0.3.sql")),
 ];
 
 #[derive(Debug)]
 pub(super) enum MigrationError {
     InvalidRegistry,
-    Sqlite(rusqlite::Error),
+    Sqlite(SqlError),
     UnregisteredVersion(SchemaVersion),
 }
 
-impl From<rusqlite::Error> for MigrationError {
-    fn from(error: rusqlite::Error) -> Self {
+impl From<SqlError> for MigrationError {
+    fn from(error: SqlError) -> Self {
         Self::Sqlite(error)
     }
 }
@@ -51,14 +66,14 @@ pub(super) fn initialize(tx: &Transaction<'_>) -> Result<SchemaVersion, Migratio
 }
 
 pub(super) fn migrate(
-    conn: &mut Connection,
+    conn: &mut SyncConnection,
     from: SchemaVersion,
 ) -> Result<SchemaVersion, MigrationError> {
     migrate_with(conn, from, production_migrations()?)
 }
 
 fn migrate_with(
-    conn: &mut Connection,
+    conn: &mut SyncConnection,
     from: SchemaVersion,
     migrations: &[Migration],
 ) -> Result<SchemaVersion, MigrationError> {
@@ -100,7 +115,7 @@ fn initialize_with(
     Ok(current)
 }
 
-fn apply(tx: &Transaction<'_>, migrations: &[Migration]) -> rusqlite::Result<()> {
+fn apply(tx: &Transaction<'_>, migrations: &[Migration]) -> SqlResult<()> {
     for migration in migrations {
         tx.execute_batch(migration.sql)?;
     }
@@ -178,7 +193,7 @@ mod tests {
         Migration::new(V2, "INSERT INTO steps VALUES (2);"),
     ];
 
-    fn user_version(conn: &Connection) -> SchemaVersion {
+    fn user_version(conn: &SyncConnection) -> SchemaVersion {
         let raw = conn
             .pragma_query_value(None, "user_version", |row| row.get::<_, i32>(0))
             .unwrap();
@@ -195,7 +210,7 @@ mod tests {
 
     #[test]
     fn baseline_creates_current_schema() {
-        let mut conn = Connection::open_in_memory().unwrap();
+        let mut conn = SyncConnection::open_in_memory().unwrap();
         let tx = conn.transaction().unwrap();
         assert_eq!(initialize(&tx).unwrap(), CURRENT_VERSION);
         tx.commit().unwrap();
@@ -207,11 +222,18 @@ mod tests {
                 |row| row.get::<_, String>(0),
             )
             .unwrap();
-        let expected = MIGRATIONS[0]
+        let baseline = MIGRATIONS[0]
             .sql
             .split_once("CREATE TABLE")
             .map(|(_, sql)| format!("CREATE TABLE{sql}"))
             .unwrap();
+        let columns = baseline
+            .trim()
+            .strip_suffix(") STRICT;")
+            .expect("baseline notes table is strict");
+        let expected = format!(
+            "{columns}, deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1))) STRICT"
+        );
 
         assert_eq!(normalize_sql(&schema), normalize_sql(&expected));
         assert_eq!(user_version(&conn), CURRENT_VERSION);
@@ -219,7 +241,7 @@ mod tests {
 
     #[test]
     fn migrations_apply_in_order() {
-        let mut conn = Connection::open_in_memory().unwrap();
+        let mut conn = SyncConnection::open_in_memory().unwrap();
         let tx = conn.transaction().unwrap();
         assert_eq!(initialize_with(&tx, TEST_MIGRATIONS).unwrap(), V2);
         tx.commit().unwrap();
@@ -229,7 +251,7 @@ mod tests {
             .unwrap()
             .query_map([], |row| row.get::<_, i64>(0))
             .unwrap()
-            .collect::<rusqlite::Result<Vec<_>>>()
+            .collect::<SqlResult<Vec<_>>>()
             .unwrap();
         assert_eq!(values, [1, 2]);
         assert_eq!(user_version(&conn), V2);
@@ -243,7 +265,7 @@ mod tests {
             Migration::new(V2, "INSERT INTO missing_table VALUES (2);"),
         ];
 
-        let mut conn = Connection::open_in_memory().unwrap();
+        let mut conn = SyncConnection::open_in_memory().unwrap();
         let tx = conn.transaction().unwrap();
         initialize_with(&tx, &FAILING_MIGRATIONS[..1]).unwrap();
         tx.commit().unwrap();
@@ -262,7 +284,7 @@ mod tests {
 
     #[test]
     fn unregistered_version_does_not_modify_database() {
-        let mut conn = Connection::open_in_memory().unwrap();
+        let mut conn = SyncConnection::open_in_memory().unwrap();
         let tx = conn.transaction().unwrap();
         initialize_with(&tx, &TEST_MIGRATIONS[..1]).unwrap();
         tx.commit().unwrap();

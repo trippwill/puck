@@ -47,6 +47,19 @@ impl TestDocument {
         assert!(output.status.code().is_some_and(|code| code != 0));
         String::from_utf8(output.stderr).unwrap()
     }
+
+    fn count(&self, table: &str, deleted: Option<bool>) -> i64 {
+        let conn = tokio_rusqlite::rusqlite::Connection::open(&self.0).unwrap();
+        let filter = deleted.map_or(String::new(), |deleted| {
+            format!(" WHERE deleted = {}", i64::from(deleted))
+        });
+        conn.query_row(
+            &format!("SELECT count(*) FROM {table}{filter}"),
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
 }
 
 impl Drop for TestDocument {
@@ -120,6 +133,17 @@ fn notes_can_be_managed() {
             .text(&["note", "list", "--archived"])
             .contains(&first)
     );
+
+    document.success(&["note", "archive", &first]);
+    document.success(&["note", "delete", &first]);
+    assert!(
+        !document
+            .text(&["note", "list", "--archived"])
+            .contains(&first)
+    );
+    assert_eq!(document.count("notes", Some(true)), 1);
+    document.success(&["clean"]);
+    assert_eq!(document.count("notes", None), 1);
 }
 
 #[test]
@@ -142,6 +166,11 @@ fn note_failures_are_reported() {
         &document.failure(&["note", "edit", &missing, "missing"]),
         "Note",
         &missing,
+    );
+    assert_not_found(
+        &document.failure(&["note", "delete", &note]),
+        "Archived note",
+        &note,
     );
 
     document.success(&["note", "archive", &note]);
@@ -248,6 +277,69 @@ fn structured_data_can_be_managed() {
                 .any(|line| line == format!("{definition}\t{kind}\t{value}"))
         );
     }
+}
+
+#[test]
+fn structured_data_is_marked_then_cleaned() {
+    let document = TestDocument::new();
+    let collection = document.id(&["collection", "add", "Values"]);
+    let record = document.id(&["record", "add", &collection]);
+    let first_def = document.id(&["field-def", "add", "text", "First"]);
+    let second_def = document.id(&["field-def", "add", "text", "Second"]);
+    document.success(&["field", "set", &record, &first_def, "first"]);
+    document.success(&["field", "set", &record, &second_def, "second"]);
+
+    document.success(&["field", "delete", &record, &first_def]);
+    assert_not_found(
+        &document.failure(&["field", "read", &record, &first_def]),
+        "Field",
+        &format!("{record}/{first_def}"),
+    );
+    assert_eq!(document.count("fields", Some(true)), 1);
+
+    document.success(&["field-def", "delete", &second_def]);
+    assert_not_found(
+        &document.failure(&["field-def", "read", &second_def]),
+        "Field definition",
+        &second_def,
+    );
+    assert!(document.text(&["field", "list", &record]).is_empty());
+    assert_eq!(document.count("field_defs", Some(true)), 1);
+    assert_eq!(document.count("fields", Some(true)), 2);
+
+    document.success(&["clean"]);
+    assert_eq!(document.count("fields", None), 0);
+    assert_eq!(document.count("field_defs", None), 1);
+    assert_eq!(document.count("records", None), 1);
+    assert_eq!(document.count("collections", None), 1);
+
+    document.success(&["field", "set", &record, &first_def, "first"]);
+    document.success(&["record", "delete", &record]);
+    assert!(document.text(&["record", "list", &collection]).is_empty());
+    assert_eq!(document.count("records", Some(true)), 1);
+    assert_eq!(document.count("fields", Some(true)), 1);
+    document.success(&["clean"]);
+    assert_eq!(document.count("records", None), 0);
+    assert_eq!(document.count("fields", None), 0);
+    assert_eq!(document.count("collections", None), 1);
+
+    let record = document.id(&["record", "add", &collection]);
+    document.success(&["field", "set", &record, &first_def, "first"]);
+    document.success(&["collection", "delete", &collection]);
+    assert!(document.text(&["collection", "list"]).is_empty());
+    assert_not_found(
+        &document.failure(&["record", "read", &record]),
+        "Record",
+        &record,
+    );
+    assert_eq!(document.count("collections", Some(true)), 1);
+    assert_eq!(document.count("records", Some(true)), 1);
+    assert_eq!(document.count("fields", Some(true)), 1);
+
+    document.success(&["clean"]);
+    assert_eq!(document.count("collections", None), 0);
+    assert_eq!(document.count("records", None), 0);
+    assert_eq!(document.count("fields", None), 0);
 }
 
 #[test]

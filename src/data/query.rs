@@ -1,7 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Charles Willis <5862883+trippwill@users.noreply.github.com>
 // SPDX-License-Identifier: MPL-2.0
 
-use tokio_rusqlite::{OptionalExtension, rusqlite};
+use tokio_rusqlite::OptionalExtension;
+use tokio_rusqlite::rusqlite::types::Type as SqlType;
+use tokio_rusqlite::rusqlite::{
+    Connection as SyncConnection,
+    Error as SqlError,
+    Result as SqlResult,
+    Row as SqlRow,
+    params,
+};
 
 use super::adapter::prelude::*;
 use super::document::DocumentError;
@@ -33,7 +41,7 @@ pub trait Query: Send + 'static {
     /// Executes the query against the given database connection.
     /// # Errors
     /// Returns an error if the query fails or persisted data is invalid.
-    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError>;
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError>;
 }
 
 /// A query for a pile note by ID.
@@ -42,7 +50,7 @@ pub struct NoteById(pub NoteId);
 impl Query for NoteById {
     type Output = Option<PileNote>;
 
-    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
         stored_note(conn, self.0, false)?
             .map(StoredNote::into_note)
             .transpose()
@@ -56,7 +64,7 @@ pub struct ArchivedNoteById(pub NoteId);
 impl Query for ArchivedNoteById {
     type Output = Option<ArchiveNote>;
 
-    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
         stored_note(conn, self.0, true)?
             .map(StoredNote::into_archive_note)
             .transpose()
@@ -69,7 +77,7 @@ pub struct NoteSummaries;
 impl Query for NoteSummaries {
     type Output = Vec<NoteSummary>;
 
-    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
         stored_notes(conn, false)?
             .into_iter()
             .map(|stored| {
@@ -87,18 +95,18 @@ pub struct NoteSearch(pub String);
 impl Query for NoteSearch {
     type Output = Vec<NoteSummary>;
 
-    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
         let mut statement = conn.prepare(
             r"
             SELECT id, body, revision, created_at, updated_at
             FROM notes
-            WHERE archived = 0 AND instr(body, ?1) > 0
+            WHERE archived = 0 AND deleted = 0 AND instr(body, ?1) > 0
             ORDER BY updated_at DESC, id DESC
             ",
         )?;
         let stored = statement
             .query_map([self.0], StoredNote::read)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+            .collect::<SqlResult<Vec<_>>>()?;
 
         stored
             .into_iter()
@@ -117,7 +125,7 @@ pub struct ArchivedNoteSummaries;
 impl Query for ArchivedNoteSummaries {
     type Output = Vec<NoteSummary>;
 
-    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
         stored_notes(conn, true)?
             .into_iter()
             .map(|stored| {
@@ -135,9 +143,9 @@ pub struct CollectionById(pub CollectionId);
 impl Query for CollectionById {
     type Output = Option<Collection>;
 
-    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
         conn.query_row(
-            "SELECT name FROM collections WHERE id = ?1",
+            "SELECT name FROM collections WHERE id = ?1 AND deleted = 0",
             [*self.0.as_uuid()],
             |row| {
                 let name: String = row.get(0)?;
@@ -154,8 +162,9 @@ pub struct Collections;
 impl Query for Collections {
     type Output = Vec<Collection>;
 
-    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
-        let mut statement = conn.prepare("SELECT id, name FROM collections ORDER BY id")?;
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
+        let mut statement =
+            conn.prepare("SELECT id, name FROM collections WHERE deleted = 0 ORDER BY id")?;
         statement
             .query_map([], |row| {
                 Ok(Collection::restore(
@@ -163,7 +172,7 @@ impl Query for Collections {
                     &row.get::<_, String>(1)?,
                 ))
             })?
-            .collect::<rusqlite::Result<_>>()
+            .collect::<SqlResult<_>>()
             .map_err(Into::into)
     }
 }
@@ -173,9 +182,9 @@ pub struct RecordById(pub RecordId);
 impl Query for RecordById {
     type Output = Option<Record>;
 
-    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
         conn.query_row(
-            "SELECT collection_id FROM records WHERE id = ?1",
+            "SELECT collection_id FROM records WHERE id = ?1 AND deleted = 0",
             [*self.0.as_uuid()],
             |row| Ok(Record::restore(self.0, CollectionId::restore(row.get(0)?))),
         )
@@ -189,14 +198,15 @@ pub struct RecordsByCollection(pub CollectionId);
 impl Query for RecordsByCollection {
     type Output = Vec<Record>;
 
-    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
-        let mut statement =
-            conn.prepare("SELECT id FROM records WHERE collection_id = ?1 ORDER BY id")?;
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
+        let mut statement = conn.prepare(
+            "SELECT id FROM records WHERE collection_id = ?1 AND deleted = 0 ORDER BY id",
+        )?;
         statement
             .query_map([*self.0.as_uuid()], |row| {
                 Ok(Record::restore(RecordId::restore(row.get(0)?), self.0))
             })?
-            .collect::<rusqlite::Result<_>>()
+            .collect::<SqlResult<_>>()
             .map_err(Into::into)
     }
 }
@@ -206,9 +216,9 @@ pub struct FieldDefById(pub FieldDefId);
 impl Query for FieldDefById {
     type Output = Option<AnyFieldDef>;
 
-    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
         conn.query_row(
-            "SELECT id, name, type FROM field_defs WHERE id = ?1",
+            "SELECT id, name, type FROM field_defs WHERE id = ?1 AND deleted = 0",
             [*self.0.as_uuid()],
             read_field_def,
         )
@@ -222,11 +232,12 @@ pub struct FieldDefs;
 impl Query for FieldDefs {
     type Output = Vec<AnyFieldDef>;
 
-    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
-        let mut statement = conn.prepare("SELECT id, name, type FROM field_defs ORDER BY id")?;
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
+        let mut statement =
+            conn.prepare("SELECT id, name, type FROM field_defs WHERE deleted = 0 ORDER BY id")?;
         statement
             .query_map([], read_field_def)?
-            .collect::<rusqlite::Result<_>>()
+            .collect::<SqlResult<_>>()
             .map_err(Into::into)
     }
 }
@@ -236,15 +247,15 @@ pub struct FieldByKey(pub (RecordId, FieldDefId));
 impl Query for FieldByKey {
     type Output = Option<AnyField>;
 
-    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
         let (record_id, def_id) = self.0;
         conn.query_row(
             r"
             SELECT record_id, field_def_id, type, value
             FROM fields
-            WHERE record_id = ?1 AND field_def_id = ?2
+            WHERE record_id = ?1 AND field_def_id = ?2 AND deleted = 0
             ",
-            rusqlite::params![*record_id.as_uuid(), *def_id.as_uuid()],
+            params![*record_id.as_uuid(), *def_id.as_uuid()],
             read_field,
         )
         .optional()
@@ -257,23 +268,23 @@ pub struct FieldsByRecord(pub RecordId);
 impl Query for FieldsByRecord {
     type Output = Vec<AnyField>;
 
-    fn run(self, conn: &rusqlite::Connection) -> Result<Self::Output, DocumentError> {
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
         let mut statement = conn.prepare(
             r"
             SELECT record_id, field_def_id, type, value
             FROM fields
-            WHERE record_id = ?1
+            WHERE record_id = ?1 AND deleted = 0
             ORDER BY field_def_id
             ",
         )?;
         statement
             .query_map([*self.0.as_uuid()], read_field)?
-            .collect::<rusqlite::Result<_>>()
+            .collect::<SqlResult<_>>()
             .map_err(Into::into)
     }
 }
 
-fn read_field_def(row: &rusqlite::Row<'_>) -> rusqlite::Result<AnyFieldDef> {
+fn read_field_def(row: &SqlRow<'_>) -> SqlResult<AnyFieldDef> {
     let id = FieldDefId::restore(row.get(0)?);
     let name: String = row.get(1)?;
     let kind: SqlFieldType = row.get(2)?;
@@ -289,7 +300,7 @@ fn read_field_def(row: &rusqlite::Row<'_>) -> rusqlite::Result<AnyFieldDef> {
     })
 }
 
-fn read_field(row: &rusqlite::Row<'_>) -> rusqlite::Result<AnyField> {
+fn read_field(row: &SqlRow<'_>) -> SqlResult<AnyField> {
     let record_id = RecordId::restore(row.get(0)?);
     let def_id = FieldDefId::restore(row.get(1)?);
     let kind: SqlFieldType = row.get(2)?;
@@ -304,9 +315,9 @@ fn read_field(row: &rusqlite::Row<'_>) -> rusqlite::Result<AnyField> {
                 0_i64 => false,
                 1 => true,
                 value => {
-                    return Err(rusqlite::Error::FromSqlConversionFailure(
+                    return Err(SqlError::FromSqlConversionFailure(
                         3,
-                        rusqlite::types::Type::Integer,
+                        SqlType::Integer,
                         std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
                             format!("invalid boolean value: {value}"),
@@ -329,39 +340,31 @@ fn read_field(row: &rusqlite::Row<'_>) -> rusqlite::Result<AnyField> {
             def_id,
             record_id,
             time::Timestamp::from_milliseconds(row.get(3)?).map_err(|error| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    3,
-                    rusqlite::types::Type::Integer,
-                    Box::new(error),
-                )
+                SqlError::FromSqlConversionFailure(3, SqlType::Integer, Box::new(error))
             })?,
         )),
     })
 }
 
-fn stored_note(
-    conn: &rusqlite::Connection,
-    id: NoteId,
-    archived: bool,
-) -> rusqlite::Result<Option<StoredNote>> {
+fn stored_note(conn: &SyncConnection, id: NoteId, archived: bool) -> SqlResult<Option<StoredNote>> {
     conn.query_row(
         r"
         SELECT id, body, revision, created_at, updated_at
         FROM notes
-        WHERE id = ?1 AND archived = ?2
+        WHERE id = ?1 AND archived = ?2 AND deleted = 0
         ",
-        rusqlite::params![*id.as_uuid(), archived],
+        params![*id.as_uuid(), archived],
         StoredNote::read,
     )
     .optional()
 }
 
-fn stored_notes(conn: &rusqlite::Connection, archived: bool) -> rusqlite::Result<Vec<StoredNote>> {
+fn stored_notes(conn: &SyncConnection, archived: bool) -> SqlResult<Vec<StoredNote>> {
     let mut statement = conn.prepare(
         r"
         SELECT id, body, revision, created_at, updated_at
         FROM notes
-        WHERE archived = ?1
+        WHERE archived = ?1 AND deleted = 0
         ORDER BY updated_at DESC, id DESC
         ",
     )?;

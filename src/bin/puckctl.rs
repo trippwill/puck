@@ -28,6 +28,8 @@ enum Commands {
     New,
     /// Validate an existing Puck document.
     Check,
+    /// Permanently remove structured data marked for deletion.
+    Clean,
     /// Manage notes.
     Note {
         #[command(subcommand)]
@@ -63,6 +65,8 @@ enum NoteCommands {
     Archive { note: NoteId },
     /// Edit a pile note.
     Edit { note: NoteId, body: String },
+    /// Mark an archived note for deletion.
+    Delete { note: NoteId },
     /// List pile notes.
     List {
         /// List archived notes instead.
@@ -86,6 +90,8 @@ enum NoteCommands {
 enum CollectionCommands {
     /// Add a collection.
     Add { name: String },
+    /// Mark a collection and its contents for deletion.
+    Delete { collection: CollectionId },
     /// List collections.
     List,
     /// Read a collection.
@@ -101,6 +107,8 @@ enum CollectionCommands {
 enum RecordCommands {
     /// Add a record to a collection.
     Add { collection: CollectionId },
+    /// Mark a record and its fields for deletion.
+    Delete { record: RecordId },
     /// List records in a collection.
     List { collection: CollectionId },
     /// Read a record.
@@ -111,6 +119,8 @@ enum RecordCommands {
 enum FieldDefCommands {
     /// Add a field definition.
     Add { kind: FieldKind, name: String },
+    /// Mark a field definition and its values for deletion.
+    Delete { definition: FieldDefId },
     /// List field definitions.
     List,
     /// Read a field definition.
@@ -134,6 +144,11 @@ enum FieldKind {
 
 #[derive(Debug, Subcommand)]
 enum FieldCommands {
+    /// Mark a field value for deletion.
+    Delete {
+        record: RecordId,
+        definition: FieldDefId,
+    },
     /// Set a field value.
     Set {
         record: RecordId,
@@ -197,6 +212,10 @@ async fn run(file: PathBuf, command: Commands) -> Result<(), CliError> {
                 Commands::Record { command } => run_record(&document, command).await,
                 Commands::FieldDef { command } => run_field_def(&document, command).await,
                 Commands::Field { command } => run_field(&document, command).await,
+                Commands::Clean => {
+                    document.execute(vec![Command::Clean]).await?;
+                    Ok(())
+                }
                 Commands::New | Commands::Check => unreachable!(),
             }
         }
@@ -253,6 +272,13 @@ async fn run_note(document: &Document, command: NoteCommands) -> Result<(), CliE
                 .edit(body)?;
             document.execute(vec![Command::EditNote(note)]).await?;
         }
+        NoteCommands::Delete { note } => {
+            document
+                .query(ArchivedNoteById(note))
+                .await?
+                .ok_or_else(|| not_found("Archived note", note.to_string()))?;
+            document.execute(vec![Command::DeleteNote(note)]).await?;
+        }
         NoteCommands::List { archived } => {
             let notes = if archived {
                 document.query(ArchivedNoteSummaries).await?
@@ -305,6 +331,15 @@ async fn run_collection(document: &Document, command: CollectionCommands) -> Res
                 .await?;
             println!("{id}");
         }
+        CollectionCommands::Delete { collection } => {
+            document
+                .query(CollectionById(collection))
+                .await?
+                .ok_or_else(|| not_found("Collection", collection.to_string()))?;
+            document
+                .execute(vec![Command::DeleteCollection(collection)])
+                .await?;
+        }
         CollectionCommands::List => {
             for collection in document.query(Collections).await? {
                 println!("{}\t{}", collection.id(), collection.name());
@@ -345,6 +380,15 @@ async fn run_record(document: &Document, command: RecordCommands) -> Result<(), 
                 .await?;
             println!("{id}");
         }
+        RecordCommands::Delete { record } => {
+            document
+                .query(RecordById(record))
+                .await?
+                .ok_or_else(|| not_found("Record", record.to_string()))?;
+            document
+                .execute(vec![Command::DeleteRecord(record)])
+                .await?;
+        }
         RecordCommands::List { collection } => {
             document
                 .query(CollectionById(collection))
@@ -381,6 +425,15 @@ async fn run_field_def(document: &Document, command: FieldDefCommands) -> Result
                 .execute(vec![Command::UpsertFieldDef(field_def)])
                 .await?;
             println!("{id}");
+        }
+        FieldDefCommands::Delete { definition } => {
+            document
+                .query(FieldDefById(definition))
+                .await?
+                .ok_or_else(|| not_found("Field definition", definition.to_string()))?;
+            document
+                .execute(vec![Command::DeleteFieldDef(definition)])
+                .await?;
         }
         FieldDefCommands::List => {
             for field_def in document.query(FieldDefs).await? {
@@ -420,8 +473,26 @@ async fn run_field_def(document: &Document, command: FieldDefCommands) -> Result
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 async fn run_field(document: &Document, command: FieldCommands) -> Result<(), CliError> {
     match command {
+        FieldCommands::Delete { record, definition } => {
+            document
+                .query(RecordById(record))
+                .await?
+                .ok_or_else(|| not_found("Record", record.to_string()))?;
+            document
+                .query(FieldDefById(definition))
+                .await?
+                .ok_or_else(|| not_found("Field definition", definition.to_string()))?;
+            document
+                .query(FieldByKey((record, definition)))
+                .await?
+                .ok_or_else(|| not_found("Field", format!("{record}/{definition}")))?;
+            document
+                .execute(vec![Command::DeleteField((record, definition))])
+                .await?;
+        }
         FieldCommands::Set {
             record,
             definition,

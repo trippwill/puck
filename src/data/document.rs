@@ -10,7 +10,7 @@ use tokio_rusqlite::rusqlite::{self};
 use tokio_rusqlite::{Connection, OpenFlags};
 
 use super::command::Command;
-use super::migration::{self, CURRENT_VERSION, MINIMUM_COMPATIBLE_VERSION, MigrationError};
+use super::migration as mig;
 use super::version::SchemaVersion;
 use crate::core::NoteError;
 use crate::data::query::Query;
@@ -173,7 +173,7 @@ async fn prepare_connection(
         if let ConnectMode::Create = kind {
             let tx = conn.transaction()?;
             tx.pragma_update(None, "application_id", APPLICATION_ID)?;
-            migration::initialize(&tx).map_err(|error| migration_error(&path, error))?;
+            mig::initialize(&tx).map_err(|error| migration_error(&path, error))?;
             tx.commit()?;
         }
 
@@ -227,17 +227,17 @@ async fn migrate_connection(
 ) -> Result<SchemaVersion, DocumentError> {
     let path = path.to_path_buf();
     conn.call_raw(move |conn| {
-        migration::migrate(conn, from).map_err(|error| migration_error(&path, error))
+        mig::migrate(conn, from).map_err(|error| migration_error(&path, error))
     })
     .await?
 }
 
-fn migration_error(path: &Path, error: MigrationError) -> DocumentError {
+fn migration_error(path: &Path, error: mig::MigrationError) -> DocumentError {
     match error {
-        MigrationError::InvalidRegistry => DocumentError::InvalidMigrationRegistry,
-        MigrationError::Sqlite(error) => error.into(),
-        MigrationError::UnregisteredVersion(version) => {
-            DocumentError::MigrationUnavailable(path.to_path_buf(), version, CURRENT_VERSION)
+        mig::MigrationError::InvalidRegistry => DocumentError::InvalidMigrationRegistry,
+        mig::MigrationError::Sqlite(error) => error.into(),
+        mig::MigrationError::UnregisteredVersion(version) => {
+            DocumentError::MigrationUnavailable(path.to_path_buf(), version, mig::CURRENT_VERSION)
         }
     }
 }
@@ -258,18 +258,18 @@ fn validate_header(path: &Path, header: &DocumentHeader) -> Result<(), DocumentE
         return Err(DocumentError::InvalidFile(path.to_path_buf()));
     }
 
-    if header.version > CURRENT_VERSION {
+    if header.version > mig::CURRENT_VERSION {
         return Err(DocumentError::UnsupportedVersion(
             path.to_path_buf(),
-            CURRENT_VERSION,
+            mig::CURRENT_VERSION,
             header.version,
         ));
     }
 
-    if header.version < MINIMUM_COMPATIBLE_VERSION {
+    if header.version < mig::MINIMUM_COMPATIBLE_VERSION {
         return Err(DocumentError::VersionError(
             path.to_path_buf(),
-            MINIMUM_COMPATIBLE_VERSION,
+            mig::MINIMUM_COMPATIBLE_VERSION,
             header.version,
         ));
     }
@@ -309,7 +309,7 @@ mod tests {
     fn invalid_application_id_is_rejected() {
         let header = DocumentHeader {
             application_id: 0,
-            version: CURRENT_VERSION,
+            version: mig::CURRENT_VERSION,
         };
 
         assert!(matches!(
@@ -321,9 +321,9 @@ mod tests {
     #[test]
     fn future_version_is_rejected_as_unsupported() {
         let future_version = SchemaVersion::new(
-            CURRENT_VERSION.major(),
-            CURRENT_VERSION.minor(),
-            CURRENT_VERSION
+            mig::CURRENT_VERSION.major(),
+            mig::CURRENT_VERSION.minor(),
+            mig::CURRENT_VERSION
                 .migration()
                 .checked_add(1)
                 .expect("test requires a future migration version"),
@@ -336,7 +336,7 @@ mod tests {
         assert!(matches!(
             validate_header(Path::new("future.puck"), &header),
             Err(DocumentError::UnsupportedVersion(_, supported, found))
-                if supported == CURRENT_VERSION && found == future_version
+                if supported == mig::CURRENT_VERSION && found == future_version
         ));
     }
 
@@ -360,7 +360,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(application_id, APPLICATION_ID);
-        assert_eq!(SchemaVersion::from_i32(user_version), CURRENT_VERSION);
+        assert_eq!(SchemaVersion::from_i32(user_version), mig::CURRENT_VERSION);
         drop(document);
         std::fs::remove_file(path).unwrap();
     }
@@ -378,7 +378,7 @@ mod tests {
         drop(document);
 
         let document = Document::open(&path).await.unwrap();
-        assert_eq!(document.version(), CURRENT_VERSION);
+        assert_eq!(document.version(), mig::CURRENT_VERSION);
         assert_eq!(document.query(NoteById(id)).await.unwrap(), Some(note));
 
         let user_version = document
@@ -386,7 +386,7 @@ mod tests {
             .call(|conn| conn.pragma_query_value(None, "user_version", |row| row.get::<_, i32>(0)))
             .await
             .unwrap();
-        assert_eq!(SchemaVersion::from_i32(user_version), CURRENT_VERSION);
+        assert_eq!(SchemaVersion::from_i32(user_version), mig::CURRENT_VERSION);
 
         drop(document);
         std::fs::remove_file(path).unwrap();
