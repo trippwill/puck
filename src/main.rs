@@ -12,7 +12,7 @@ struct Args {
     document: Option<PathBuf>,
 }
 
-fn main() -> cosmic::iced::Result {
+fn main() -> iced::Result {
     let args = Args::parse();
 
     // Get the system's preferred languages.
@@ -21,12 +21,17 @@ fn main() -> cosmic::iced::Result {
     // Enable localizations to be applied.
     puck::i18n::init(&requested_languages);
 
-    // Settings for configuring the application window and iced runtime.
-    let settings = cosmic::app::Settings::default().size_limits(
-        cosmic::iced::Limits::NONE
-            .min_width(360.0)
-            .min_height(180.0),
-    );
-
-    cosmic::app::run::<puck::app::AppModel>(settings, args.document)
+    let document = args.document;
+    iced::application(
+        move || puck::app::AppModel::new(document.clone()),
+        puck::app::AppModel::update,
+        puck::app::AppModel::view,
+    )
+    .title(puck::app::AppModel::title)
+    .executor::<iced::executor::Default>()
+    .window(iced::window::Settings {
+        min_size: Some(iced::Size::new(360.0, 180.0)),
+        ..iced::window::Settings::default()
+    })
+    .run()
 }

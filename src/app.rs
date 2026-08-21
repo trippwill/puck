@@ -1,31 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Charles Willis <5862883+trippwill@users.noreply.github.com>
 // SPDX-License-Identifier: MPL-2.0
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
-use cosmic::app::context_drawer;
-use cosmic::dialog::file_chooser::{self, FileFilter};
-use cosmic::iced::widget::text_editor;
-use cosmic::iced::{Alignment, Length};
-use cosmic::prelude::*;
-use cosmic::widget::about::About;
-use cosmic::widget::{self, menu};
+use iced::widget::{self, text_editor};
+use iced::{Alignment, Element, Length, Task};
+use rfd::AsyncFileDialog;
 
 use crate::core::{ArchiveNote, NoteId, NoteSummary, PileNote};
 use crate::data::prelude::*;
 use crate::fl;
 
-const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
-const APP_ICON: &[u8] = include_bytes!("../resources/icons/hicolor/scalable/apps/icon.svg");
-
 /// The application model for an open Puck document.
 pub struct AppModel {
-    core: cosmic::Core,
-    context_page: ContextPage,
-    about: About,
-    #[allow(clippy::zero_sized_map_values)]
-    key_binds: HashMap<menu::KeyBind, MenuAction>,
     document: Option<Document>,
     list: NoteList,
     summaries: Vec<NoteSummary>,
@@ -53,7 +40,6 @@ pub enum Message {
     DraftEdited(text_editor::Action),
     EditDraftEdited(text_editor::Action),
     EditNote,
-    LaunchUrl(String),
     NewDocument,
     NoteAdded(Result<PileNote, String>),
     NoteEdited(Result<PileNote, String>),
@@ -67,7 +53,6 @@ pub enum Message {
     SelectNote(NoteId),
     ShowNotes(NoteList),
     SummariesLoaded(NoteList, Result<Vec<NoteSummary>, String>),
-    ToggleContextPage(ContextPage),
 }
 
 /// The note list shown in the document sidebar.
@@ -87,36 +72,10 @@ enum SelectedNote {
     Archive(ArchiveNote),
 }
 
-impl cosmic::Application for AppModel {
-    type Executor = cosmic::executor::Default;
-    type Flags = Option<PathBuf>;
-    type Message = Message;
-
-    const APP_ID: &'static str = "dev.terranul.puck";
-
-    fn core(&self) -> &cosmic::Core {
-        &self.core
-    }
-
-    fn core_mut(&mut self) -> &mut cosmic::Core {
-        &mut self.core
-    }
-
-    fn init(
-        core: cosmic::Core,
-        document_path: Self::Flags,
-    ) -> (Self, Task<cosmic::Action<Self::Message>>) {
+impl AppModel {
+    pub fn new(document_path: Option<PathBuf>) -> (Self, Task<Message>) {
         let busy = document_path.is_some();
-        let mut app = Self {
-            core,
-            context_page: ContextPage::default(),
-            about: About::default()
-                .name(fl!("app-title"))
-                .icon(widget::icon::from_svg_bytes(APP_ICON))
-                .version(env!("CARGO_PKG_VERSION"))
-                .links([(fl!("repository"), REPOSITORY)])
-                .license(env!("CARGO_PKG_LICENSE")),
-            key_binds: HashMap::new(),
+        let app = Self {
             document: None,
             list: NoteList::Pile,
             summaries: Vec::new(),
@@ -130,7 +89,7 @@ impl cosmic::Application for AppModel {
             error: None,
         };
         let command = match document_path {
-            Some(path) => cosmic::task::future(async move {
+            Some(path) => Task::future(async move {
                 Message::DocumentLoaded(
                     Document::open(path)
                         .await
@@ -138,83 +97,65 @@ impl cosmic::Application for AppModel {
                         .map_err(|error| error.to_string()),
                 )
             }),
-            None => app.update_title(),
+            None => Task::none(),
         };
 
         (app, command)
     }
 
-    fn header_start(&self) -> Vec<Element<'_, Self::Message>> {
-        vec![
-            menu::bar(vec![menu::Tree::with_children(
-                menu::root(fl!("view")).apply(Element::from),
-                menu::items(
-                    &self.key_binds,
-                    vec![menu::Item::Button(fl!("about"), None, MenuAction::About)],
-                ),
-            )])
-            .into(),
-        ]
-    }
-
-    fn header_end(&self) -> Vec<Element<'_, Self::Message>> {
-        vec![
-            widget::button::text(fl!("close-document"))
-                .on_press_maybe(
-                    (self.document.is_some() && !self.busy && !self.editing)
-                        .then_some(Message::CloseDocument),
-                )
-                .into(),
-            widget::button::text(fl!("new-document"))
-                .on_press_maybe((!self.busy && !self.editing).then_some(Message::NewDocument))
-                .into(),
-            widget::button::suggested(fl!("open-document"))
-                .on_press_maybe((!self.busy && !self.editing).then_some(Message::OpenDocument))
-                .into(),
-        ]
-    }
-
-    fn context_drawer(&self) -> Option<context_drawer::ContextDrawer<'_, Self::Message>> {
-        if !self.core.window.show_context {
-            return None;
+    pub fn title(&self) -> String {
+        let mut title = fl!("app-title");
+        if let Some(document) = &self.document
+            && let Some(name) = document.path().file_name()
+        {
+            title.push_str(" — ");
+            title.push_str(&name.to_string_lossy());
         }
-
-        Some(match self.context_page {
-            ContextPage::About => context_drawer::about(
-                &self.about,
-                |url| Message::LaunchUrl(url.to_string()),
-                Message::ToggleContextPage(ContextPage::About),
-            ),
-        })
+        title
     }
 
-    fn view(&self) -> Element<'_, Self::Message> {
-        let spacing = cosmic::theme::spacing();
-        let mut content = widget::column::with_capacity(3)
-            .spacing(spacing.space_m)
-            .padding(spacing.space_l)
+    pub fn view(&self) -> Element<'_, Message> {
+        let mut content = widget::Column::with_capacity(4)
+            .spacing(16)
+            .padding(24)
             .width(Length::Fill)
             .height(Length::Fill);
 
         if let Some(error) = &self.error {
-            content = content.push(widget::warning(error).on_close(Message::ClearError));
+            content = content.push(
+                widget::container(
+                    widget::row![
+                        widget::text(error).style(widget::text::danger),
+                        widget::Space::new().width(Length::Fill),
+                        widget::button("×")
+                            .style(widget::button::text)
+                            .on_press(Message::ClearError),
+                    ]
+                    .align_y(Alignment::Center),
+                )
+                .padding(12)
+                .style(widget::container::bordered_box),
+            );
         }
 
         if self.document.is_some() {
+            content = content.push(self.document_actions());
             content = content.push(self.document_view());
         } else {
-            let landing = widget::column::with_capacity(4)
-                .push(widget::text::title1(fl!("app-title")))
+            let landing = widget::Column::with_capacity(4)
+                .push(widget::text(fl!("app-title")).size(40))
                 .push(widget::text(fl!("landing-description")))
                 .push(
-                    widget::button::suggested(fl!("new-document"))
+                    widget::button(widget::text(fl!("new-document")))
+                        .style(widget::button::primary)
                         .on_press_maybe((!self.busy).then_some(Message::NewDocument)),
                 )
                 .push(
-                    widget::button::text(fl!("open-document"))
+                    widget::button(widget::text(fl!("open-document")))
+                        .style(widget::button::secondary)
                         .on_press_maybe((!self.busy).then_some(Message::OpenDocument)),
                 )
-                .spacing(spacing.space_m)
+                .spacing(16)
                 .align_x(Alignment::Center);
 
             content = content.push(
@@ -232,7 +173,7 @@ impl cosmic::Application for AppModel {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn update(&mut self, message: Self::Message) -> Task<cosmic::Action<Self::Message>> {
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::NewDocument => {
                 if self.busy || self.editing {
@@ -243,31 +184,20 @@ impl cosmic::Application for AppModel {
                 let title = fl!("new-document");
                 let filter_name = fl!("puck-documents");
 
-                return cosmic::task::future(async move {
-                    let filter = FileFilter::new(&filter_name).glob("*.puck");
-                    let result = file_chooser::save::Dialog::new()
-                        .title(title)
-                        .file_name(String::from("notes.puck"))
-                        .filter(filter)
+                return Task::future(async move {
+                    let file = AsyncFileDialog::new()
+                        .set_title(title)
+                        .set_file_name("notes.puck")
+                        .add_filter(filter_name, &["puck"])
                         .save_file()
                         .await;
-
-                    let result = match result {
-                        Ok(response) => match response.url() {
-                            Some(url) => match url.to_file_path() {
-                                Ok(path) => Document::create(path)
-                                    .await
-                                    .map(Some)
-                                    .map_err(|error| error.to_string()),
-                                Err(()) => Err(fl!("invalid-document-path")),
-                            },
-                            None => Ok(None),
-                        },
-                        Err(file_chooser::Error::Cancelled) => Ok(None),
-                        Err(error) => Err(format!("{error:?}")),
-                    };
-
-                    Message::DocumentLoaded(result)
+                    Message::DocumentLoaded(match file {
+                        Some(file) => Document::create(file.path())
+                            .await
+                            .map(Some)
+                            .map_err(|error| error.to_string()),
+                        None => Ok(None),
+                    })
                 });
             }
             Message::OpenDocument => {
@@ -279,27 +209,19 @@ impl cosmic::Application for AppModel {
                 let title = fl!("open-document");
                 let filter_name = fl!("puck-documents");
 
-                return cosmic::task::future(async move {
-                    let filter = FileFilter::new(&filter_name).glob("*.puck");
-                    let result = file_chooser::open::Dialog::new()
-                        .title(title)
-                        .filter(filter)
-                        .open_file()
+                return Task::future(async move {
+                    let file = AsyncFileDialog::new()
+                        .set_title(title)
+                        .add_filter(filter_name, &["puck"])
+                        .pick_file()
                         .await;
-
-                    let result = match result {
-                        Ok(response) => match response.url().to_file_path() {
-                            Ok(path) => Document::open(path)
-                                .await
-                                .map(Some)
-                                .map_err(|error| error.to_string()),
-                            Err(()) => Err(fl!("invalid-document-path")),
-                        },
-                        Err(file_chooser::Error::Cancelled) => Ok(None),
-                        Err(error) => Err(format!("{error:?}")),
-                    };
-
-                    Message::DocumentLoaded(result)
+                    Message::DocumentLoaded(match file {
+                        Some(file) => Document::open(file.path())
+                            .await
+                            .map(Some)
+                            .map_err(|error| error.to_string()),
+                        None => Ok(None),
+                    })
                 });
             }
             Message::DocumentLoaded(result) => {
@@ -316,10 +238,7 @@ impl cosmic::Application for AppModel {
                         self.search.clear();
                         self.editing = false;
                         self.busy = true;
-                        return cosmic::task::batch([
-                            self.update_title(),
-                            load_summaries(document, NoteList::Pile),
-                        ]);
+                        return load_summaries(document, NoteList::Pile);
                     }
                     Ok(None) => {}
                     Err(error) => self.error = Some(error),
@@ -338,7 +257,7 @@ impl cosmic::Application for AppModel {
                 self.edit_draft = text_editor::Content::new();
                 self.search.clear();
                 self.error = None;
-                return self.update_title();
+                return Task::none();
             }
             Message::SummariesLoaded(list, result) => {
                 if list != self.list {
@@ -394,7 +313,7 @@ impl cosmic::Application for AppModel {
                 };
 
                 return match self.list {
-                    NoteList::Pile | NoteList::Search(_) => cosmic::task::future(async move {
+                    NoteList::Pile | NoteList::Search(_) => Task::future(async move {
                         Message::NoteLoaded(
                             id,
                             document
@@ -403,7 +322,7 @@ impl cosmic::Application for AppModel {
                                 .map_err(|error| error.to_string()),
                         )
                     }),
-                    NoteList::Archive => cosmic::task::future(async move {
+                    NoteList::Archive => Task::future(async move {
                         Message::ArchivedNoteLoaded(
                             id,
                             document
@@ -484,7 +403,7 @@ impl cosmic::Application for AppModel {
 
                 self.busy = true;
                 self.error = None;
-                return cosmic::task::future(async move {
+                return Task::future(async move {
                     let result = document
                         .execute(vec![Command::EditNote(note.clone())])
                         .await
@@ -508,7 +427,7 @@ impl cosmic::Application for AppModel {
                 self.error = None;
                 let note = PileNote::create(self.draft.text());
 
-                return cosmic::task::future(async move {
+                return Task::future(async move {
                     let result = document
                         .execute(vec![Command::AddNote(note.clone())])
                         .await
@@ -562,7 +481,7 @@ impl cosmic::Application for AppModel {
 
                 self.busy = true;
                 self.error = None;
-                return cosmic::task::future(async move {
+                return Task::future(async move {
                     Message::NoteMoved(
                         document
                             .execute(vec![Command::ArchiveNote(note)])
@@ -585,7 +504,7 @@ impl cosmic::Application for AppModel {
 
                 self.busy = true;
                 self.error = None;
-                return cosmic::task::future(async move {
+                return Task::future(async move {
                     Message::NoteMoved(
                         document
                             .execute(vec![Command::UnarchiveNote(note)])
@@ -625,19 +544,6 @@ impl cosmic::Application for AppModel {
                 return self.update(Message::ShowNotes(list));
             }
             Message::ClearError => self.error = None,
-            Message::ToggleContextPage(context_page) => {
-                if self.context_page == context_page {
-                    self.core.window.show_context = !self.core.window.show_context;
-                } else {
-                    self.context_page = context_page;
-                    self.core.window.show_context = true;
-                }
-            }
-            Message::LaunchUrl(url) => {
-                if let Err(error) = open::that_detached(&url) {
-                    self.error = Some(error.to_string());
-                }
-            }
         }
 
         Task::none()
@@ -647,7 +553,6 @@ impl cosmic::Application for AppModel {
 impl AppModel {
     #[allow(clippy::too_many_lines)]
     fn document_view(&self) -> Element<'_, Message> {
-        let spacing = cosmic::theme::spacing();
         let document = self
             .document
             .as_ref()
@@ -658,16 +563,22 @@ impl AppModel {
             .unwrap_or_else(|| document.path().as_os_str())
             .to_string_lossy();
 
-        let mut list = widget::list_column::with_capacity(self.summaries.len());
+        let mut list = widget::Column::with_capacity(self.summaries.len()).spacing(4);
         for summary in &self.summaries {
             let preview = if summary.preview.is_empty() {
                 fl!("untitled-note")
             } else {
                 summary.preview.clone()
             };
-            list = list.add(
-                widget::list_column::button(widget::text(preview))
-                    .selected(self.selected_id == Some(summary.id))
+            let selected = self.selected_id == Some(summary.id);
+            list = list.push(
+                widget::button(widget::text(preview))
+                    .style(if selected {
+                        widget::button::primary
+                    } else {
+                        widget::button::text
+                    })
+                    .width(Length::Fill)
                     .on_press_maybe(
                         (!self.editing && !self.busy).then_some(Message::SelectNote(summary.id)),
                     ),
@@ -686,118 +597,128 @@ impl AppModel {
         };
 
         let pile_button = if self.list == NoteList::Pile {
-            widget::button::suggested(fl!("pile"))
+            widget::button(widget::text(fl!("pile"))).style(widget::button::primary)
         } else {
-            widget::button::text(fl!("pile"))
+            widget::button(widget::text(fl!("pile"))).style(widget::button::text)
         }
         .on_press_maybe(
             (!self.busy && !self.editing && self.list != NoteList::Pile)
                 .then_some(Message::ShowNotes(NoteList::Pile)),
         );
         let archive_button = if self.list == NoteList::Archive {
-            widget::button::suggested(fl!("archive"))
+            widget::button(widget::text(fl!("archive"))).style(widget::button::primary)
         } else {
-            widget::button::text(fl!("archive"))
+            widget::button(widget::text(fl!("archive"))).style(widget::button::text)
         }
         .on_press_maybe(
             (!self.busy && !self.editing && self.list != NoteList::Archive)
                 .then_some(Message::ShowNotes(NoteList::Archive)),
         );
 
-        let mut sidebar = widget::column::with_capacity(3);
+        let mut sidebar = widget::Column::with_capacity(3);
         if self.list != NoteList::Archive {
-            let search = widget::text_input::search_input(fl!("search-placeholder"), &self.search);
+            let placeholder = fl!("search-placeholder");
+            let search = widget::text_input(&placeholder, &self.search);
             let search = if self.busy || self.editing {
                 search
             } else {
                 search
                     .on_input(Message::SearchChanged)
-                    .on_submit(|_| Message::SearchNotes)
-                    .on_clear(Message::ClearSearch)
+                    .on_submit(Message::SearchNotes)
             };
-            sidebar = sidebar.push(
-                widget::row::with_capacity(2)
-                    .push(search)
-                    .push(
-                        widget::button::suggested(fl!("search-notes")).on_press_maybe(
-                            (!self.busy && !self.editing).then_some(Message::SearchNotes),
-                        ),
-                    )
-                    .spacing(spacing.space_s),
+            let mut search_row = widget::Row::with_capacity(3).push(search).push(
+                widget::button(widget::text(fl!("search-notes")))
+                    .style(widget::button::primary)
+                    .on_press_maybe((!self.busy && !self.editing).then_some(Message::SearchNotes)),
             );
+            if !self.search.is_empty() {
+                search_row = search_row.push(
+                    widget::button("×")
+                        .style(widget::button::text)
+                        .on_press_maybe(
+                            (!self.busy && !self.editing).then_some(Message::ClearSearch),
+                        ),
+                );
+            }
+            sidebar = sidebar.push(search_row.spacing(8));
         }
         let sidebar = sidebar
             .push(
-                widget::row::with_capacity(2)
+                widget::Row::with_capacity(2)
                     .push(pile_button)
                     .push(archive_button)
-                    .spacing(spacing.space_s),
+                    .spacing(8),
             )
             .push(notes)
-            .spacing(spacing.space_s)
+            .spacing(8)
             .width(260)
             .height(Length::Fill);
 
         let body: Element<_> = match (&self.selected_note, self.editing) {
             (Some(SelectedNote::Pile(note)), true) => {
-                let editor =
-                    widget::text_editor::text_editor(&self.edit_draft).height(Length::Fill);
+                let editor = widget::text_editor(&self.edit_draft).height(Length::Fill);
                 let editor = if self.busy {
                     editor
                 } else {
                     editor.on_action(Message::EditDraftEdited)
                 };
 
-                widget::column::with_capacity(2)
+                widget::Column::with_capacity(2)
                     .push(editor)
                     .push(
-                        widget::row::with_capacity(2)
+                        widget::Row::with_capacity(2)
                             .push(
-                                widget::button::suggested(fl!("save-note")).on_press_maybe(
-                                    (!self.busy && self.edit_draft.text() != note.body())
-                                        .then_some(Message::SaveNote),
-                                ),
+                                widget::button(widget::text(fl!("save-note")))
+                                    .style(widget::button::primary)
+                                    .on_press_maybe(
+                                        (!self.busy && self.edit_draft.text() != note.body())
+                                            .then_some(Message::SaveNote),
+                                    ),
                             )
                             .push(
-                                widget::button::text(fl!("cancel"))
+                                widget::button(widget::text(fl!("cancel")))
+                                    .style(widget::button::text)
                                     .on_press_maybe((!self.busy).then_some(Message::CancelEditing)),
                             )
-                            .spacing(spacing.space_s),
+                            .spacing(8),
                     )
-                    .spacing(spacing.space_s)
+                    .spacing(8)
                     .height(Length::Fill)
                     .into()
             }
-            (Some(SelectedNote::Pile(note)), false) => widget::column::with_capacity(2)
+            (Some(SelectedNote::Pile(note)), false) => widget::Column::with_capacity(2)
                 .push(
                     widget::scrollable(widget::text(note.body()).width(Length::Fill))
                         .height(Length::Fill),
                 )
                 .push(
-                    widget::row::with_capacity(2)
+                    widget::Row::with_capacity(2)
                         .push(
-                            widget::button::text(fl!("edit-note"))
+                            widget::button(widget::text(fl!("edit-note")))
+                                .style(widget::button::text)
                                 .on_press_maybe((!self.busy).then_some(Message::EditNote)),
                         )
                         .push(
-                            widget::button::text(fl!("archive"))
+                            widget::button(widget::text(fl!("archive")))
+                                .style(widget::button::text)
                                 .on_press_maybe((!self.busy).then_some(Message::ArchiveNote)),
                         )
-                        .spacing(spacing.space_s),
+                        .spacing(8),
                 )
-                .spacing(spacing.space_s)
+                .spacing(8)
                 .height(Length::Fill)
                 .into(),
-            (Some(SelectedNote::Archive(note)), _) => widget::column::with_capacity(2)
+            (Some(SelectedNote::Archive(note)), _) => widget::Column::with_capacity(2)
                 .push(
                     widget::scrollable(widget::text(note.body()).width(Length::Fill))
                         .height(Length::Fill),
                 )
                 .push(
-                    widget::button::suggested(fl!("restore-note"))
+                    widget::button(widget::text(fl!("restore-note")))
+                        .style(widget::button::primary)
                         .on_press_maybe((!self.busy).then_some(Message::RestoreNote)),
                 )
-                .spacing(spacing.space_s)
+                .spacing(8)
                 .height(Length::Fill)
                 .into(),
             (None, _) => widget::container(widget::text(fl!("select-note")))
@@ -806,62 +727,62 @@ impl AppModel {
                 .into(),
         };
 
-        let composer = widget::column::with_capacity(3)
-            .push(widget::text::title3(fl!("new-note")))
+        let composer = widget::Column::with_capacity(3)
+            .push(widget::text(fl!("new-note")).size(20))
             .push(
-                widget::text_editor::text_editor(&self.draft)
+                widget::text_editor(&self.draft)
                     .placeholder(fl!("note-placeholder"))
                     .height(140)
                     .on_action(Message::DraftEdited),
             )
             .push(
-                widget::button::suggested(fl!("add-note"))
+                widget::button(widget::text(fl!("add-note")))
+                    .style(widget::button::primary)
                     .on_press_maybe((!self.busy && !self.editing).then_some(Message::AddNote)),
             )
-            .spacing(spacing.space_s);
+            .spacing(8);
 
-        let mut main = widget::column::with_capacity(2).push(body);
+        let mut main = widget::Column::with_capacity(2).push(body);
         if !self.editing && self.list == NoteList::Pile {
             main = main.push(composer);
         }
-        let main = main
-            .spacing(spacing.space_m)
-            .width(Length::Fill)
-            .height(Length::Fill);
+        let main = main.spacing(16).width(Length::Fill).height(Length::Fill);
 
-        widget::column::with_capacity(2)
-            .push(widget::text::title2(name))
+        widget::Column::with_capacity(2)
+            .push(widget::text(name).size(28))
             .push(
-                widget::row::with_capacity(2)
+                widget::Row::with_capacity(2)
                     .push(sidebar)
                     .push(main)
-                    .spacing(spacing.space_l)
+                    .spacing(24)
                     .height(Length::Fill),
             )
-            .spacing(spacing.space_m)
+            .spacing(16)
             .height(Length::Fill)
             .into()
     }
 
-    fn update_title(&mut self) -> Task<cosmic::Action<Message>> {
-        let mut title = fl!("app-title");
-        if let Some(document) = &self.document
-            && let Some(name) = document.path().file_name()
-        {
-            title.push_str(" — ");
-            title.push_str(&name.to_string_lossy());
-        }
-
-        if let Some(id) = self.core.main_window_id() {
-            self.set_window_title(title, id)
-        } else {
-            Task::none()
-        }
+    fn document_actions(&self) -> Element<'_, Message> {
+        widget::row![
+            widget::Space::new().width(Length::Fill),
+            widget::button(widget::text(fl!("close-document")))
+                .style(widget::button::text)
+                .on_press_maybe((!self.busy && !self.editing).then_some(Message::CloseDocument),),
+            widget::button(widget::text(fl!("new-document")))
+                .style(widget::button::text)
+                .on_press_maybe((!self.busy && !self.editing).then_some(Message::NewDocument)),
+            widget::button(widget::text(fl!("open-document")))
+                .style(widget::button::primary)
+                .on_press_maybe((!self.busy && !self.editing).then_some(Message::OpenDocument)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into()
     }
 }
 
-fn load_summaries(document: Document, list: NoteList) -> Task<cosmic::Action<Message>> {
-    cosmic::task::future(async move {
+fn load_summaries(document: Document, list: NoteList) -> Task<Message> {
+    Task::future(async move {
         let result = match &list {
             NoteList::Pile => document.query(NoteSummaries).await,
             NoteList::Archive => document.query(ArchivedNoteSummaries).await,
@@ -873,23 +794,21 @@ fn load_summaries(document: Document, list: NoteList) -> Task<cosmic::Action<Mes
     })
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-pub enum ContextPage {
-    #[default]
-    About,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MenuAction {
-    About,
-}
+    #[test]
+    fn new_document_button_emits_message() {
+        let (app, _) = AppModel::new(None);
+        let mut ui = iced_test::simulator(app.view());
+        let label = fl!("new-document");
 
-impl menu::action::MenuAction for MenuAction {
-    type Message = Message;
+        ui.click(label.as_str()).expect("click New Document");
 
-    fn message(&self) -> Self::Message {
-        match self {
-            Self::About => Message::ToggleContextPage(ContextPage::About),
-        }
+        assert!(matches!(
+            ui.into_messages().next(),
+            Some(Message::NewDocument)
+        ));
     }
 }

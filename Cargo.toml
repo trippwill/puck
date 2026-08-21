@@ -15,7 +15,8 @@ i18n-embed = { version = "0.16", features = [
     "desktop-requester",
 ] }
 i18n-embed-fl = "0.10"
-open = "5.3.2"
+iced = { version = "0.14.0", features = ["tokio", "markdown"] }
+rfd = { version = "0.16.0", default-features = false, features = ["xdg-portal", "tokio"] }
 rust-embed = "8.8.0"
 thiserror = "2.0.19"
 time = { version = "0.3.55", features = ["parsing"] }
@@ -25,25 +26,5 @@ tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 uuid = { version = "1.24.0", features = ["v7"] }
 
-[dependencies.libcosmic]
-git = "https://github.com/pop-os/libcosmic.git"
-# See https://github.com/pop-os/libcosmic/blob/master/Cargo.toml for available features.
-# Remove features if not needed.
-features = [
-    # About widget for the app
-    "about",
-    # On app startup, focuses an existing instance if the app is already open
-    "single-instance",
-    # Markdown widget
-    "markdown",
-    # GPU-accelerated rendering
-    "wgpu",
-    # xdg portal dialogs on Linux
-    "xdg-portal"
-]
-
-# Uncomment to test a locally-cloned libcosmic
-# [patch.'https://github.com/pop-os/libcosmic']
-# libcosmic = { path = "../libcosmic" }
-# cosmic-config = { path = "../libcosmic/cosmic-config" }
-# cosmic-theme = { path = "../libcosmic/cosmic-theme" }
+[dev-dependencies]
+iced_test = "0.14.0"

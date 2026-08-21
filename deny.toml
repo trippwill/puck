@@ -4,8 +4,7 @@ all-features = true
 [advisories]
 ignore = [
     { id = "RUSTSEC-2024-0436", reason = "Transitive macOS dependency; no safe upgrade is available" },
-    { id = "RUSTSEC-2026-0192", reason = "Transitive COSMIC font dependency; no safe upgrade is available" },
-    { id = "RUSTSEC-2026-0206", reason = "Transitive COSMIC SVG dependency; no safe upgrade is available" },
+    { id = "RUSTSEC-2026-0192", reason = "Transitive iced font dependency; no safe upgrade is available" },
 ]
 
 [licenses]
@@ -25,44 +24,6 @@ allow = [
 ]
 confidence-threshold = 0.8
 
-[[licenses.exceptions]]
-allow = ["GPL-3.0-only"]
-crate = "cosmic-protocols"
-
-[[licenses.exceptions]]
-allow = ["GPL-3.0-only"]
-crate = "cosmic-client-toolkit"
-
-[[licenses.clarify]]
-crate = "cosmic-config"
-expression = "MPL-2.0"
-license-files = [{ path = "../LICENSE", hash = 0 }]
-
-[[licenses.clarify]]
-crate = "cosmic-config-derive"
-expression = "MPL-2.0"
-license-files = [{ path = "../LICENSE", hash = 0 }]
-
-[[licenses.clarify]]
-crate = "cosmic-settings-daemon"
-expression = "MPL-2.0"
-license-files = [{ path = "../LICENSE.md", hash = 0 }]
-
-[[licenses.clarify]]
-crate = "cosmic-theme"
-expression = "MPL-2.0"
-license-files = [{ path = "../LICENSE", hash = 0 }]
-
-[[licenses.clarify]]
-crate = "dnd"
-expression = "MIT"
-license-files = [{ path = "../LICENSE", hash = 0 }]
-
-[[licenses.clarify]]
-crate = "iced_accessibility"
-expression = "MIT"
-license-files = [{ path = "../LICENSE", hash = 0 }]
-
 [[licenses.clarify]]
 crate = "mime@0.1.0"
 expression = "MIT"
@@ -77,16 +38,5 @@ unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
-    "https://github.com/iced-rs/cryoglyph.git",
-    "https://github.com/jackpot51/rust-atomicwrites",
-    "https://github.com/pop-os/cosmic-protocols",
-    "https://github.com/pop-os/dbus-settings-bindings",
-    "https://github.com/pop-os/freedesktop-icons",
-    "https://github.com/pop-os/libcosmic.git",
-    "https://github.com/pop-os/smithay-clipboard",
-    "https://github.com/pop-os/softbuffer",
-    "https://github.com/pop-os/window_clipboard.git",
-    "https://github.com/pop-os/winit.git",
     "https://github.com/trippwill/tokio-rusqlite.git",
-    "https://github.com/wash2/accesskit",
 ]
