@@ -1,14 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Charles Willis <5862883+trippwill@users.noreply.github.com>
 // SPDX-License-Identifier: MPL-2.0
 
+//! The puck application root.
+
 use std::path::PathBuf;
 
 use iced::widget::{self, text_editor};
 use iced::{Alignment, Element, Length, Task};
 use rfd::AsyncFileDialog;
 
-use crate::core::{ArchiveNote, NoteId, NoteSummary, PileNote};
+use crate::core::prelude::*;
 use crate::data::prelude::*;
+use crate::data::query;
 use crate::fl;
 
 /// The application model for an open Puck document.
@@ -317,7 +320,7 @@ impl AppModel {
                         Message::NoteLoaded(
                             id,
                             document
-                                .query(NoteById(id))
+                                .query(query::NoteById(id))
                                 .await
                                 .map_err(|error| error.to_string()),
                         )
@@ -326,7 +329,7 @@ impl AppModel {
                         Message::ArchivedNoteLoaded(
                             id,
                             document
-                                .query(ArchivedNoteById(id))
+                                .query(query::ArchivedNoteById(id))
                                 .await
                                 .map_err(|error| error.to_string()),
                         )
@@ -784,9 +787,9 @@ impl AppModel {
 fn load_summaries(document: Document, list: NoteList) -> Task<Message> {
     Task::future(async move {
         let result = match &list {
-            NoteList::Pile => document.query(NoteSummaries).await,
-            NoteList::Archive => document.query(ArchivedNoteSummaries).await,
-            NoteList::Search(query) => document.query(NoteSearch(query.clone())).await,
+            NoteList::Pile => document.query(query::NoteSummaries).await,
+            NoteList::Archive => document.query(query::ArchivedNoteSummaries).await,
+            NoteList::Search(search) => document.query(query::NoteSearch(search.clone())).await,
         }
         .map_err(|error| error.to_string());
 

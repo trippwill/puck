@@ -6,22 +6,6 @@
 use thiserror::Error;
 use time::Timestamp;
 
-/// Note types.
-pub mod prelude {
-    pub use super::{
-        Archive,
-        ArchiveNote,
-        MAX_PREVIEW_CHARS,
-        Note,
-        NoteError,
-        NoteId,
-        NoteState,
-        NoteSummary,
-        Pile,
-        PileNote,
-    };
-}
-
 use crate::core::uuidv7_id;
 
 /// The maximum number of characters in a pile-note preview.

@@ -6,11 +6,7 @@ use tokio_rusqlite::{Row, rusqlite};
 
 use crate::core::{ArchiveNote, NoteError, NoteId, PileNote};
 
-pub mod prelude {
-    pub use super::StoredNote;
-}
-
-pub struct StoredNote {
+pub(crate) struct StoredNote {
     id: uuid::Uuid,
     body: String,
     revision: u32,

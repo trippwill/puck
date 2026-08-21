@@ -5,30 +5,11 @@
 
 use std::marker::PhantomData;
 
-use super::record::prelude::*;
+use super::record::{Record, RecordId};
 use super::uuidv7_id;
 
 mod sealed {
     pub trait Sealed {}
-}
-
-/// Field types.
-pub mod prelude {
-    pub use super::{
-        AnyField,
-        AnyFieldDef,
-        Boolean,
-        Date,
-        Field,
-        FieldDef,
-        FieldDefId,
-        FieldKey,
-        FieldType,
-        Integer,
-        Text,
-        Time,
-        Timestamp,
-    };
 }
 
 uuidv7_id!(FieldDefId, "A unique field-definition identifier.");

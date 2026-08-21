@@ -3,14 +3,9 @@
 
 //! Structured records belonging to collections.
 
-use super::collection::prelude::*;
-use super::field::prelude::*;
+use super::collection::{Collection, CollectionId};
+use super::field::{Field, FieldDef, FieldType};
 use super::uuidv7_id;
-
-/// Record types.
-pub mod prelude {
-    pub use super::{Record, RecordId};
-}
 
 uuidv7_id!(RecordId, "A unique record identifier.");
 
@@ -59,6 +54,7 @@ impl Record {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Text;
 
     #[test]
     fn fields_inherit_record_and_definition_identity() {

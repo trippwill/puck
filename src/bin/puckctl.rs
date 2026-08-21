@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand, ValueEnum};
 use puck::core::prelude::*;
 use puck::data::prelude::*;
+use puck::data::query;
 use thiserror::Error;
 
 #[derive(Debug, Parser)]
@@ -297,7 +298,7 @@ async fn run_note(document: &Document, command: NoteCommands) -> Result<(), CliE
         }
         NoteCommands::Archive { note } => {
             let note = document
-                .query(NoteById(note))
+                .query(query::NoteById(note))
                 .await?
                 .ok_or_else(|| not_found("Note", note.to_string()))?
                 .archive();
@@ -305,7 +306,7 @@ async fn run_note(document: &Document, command: NoteCommands) -> Result<(), CliE
         }
         NoteCommands::Edit { note, body } => {
             let note = document
-                .query(NoteById(note))
+                .query(query::NoteById(note))
                 .await?
                 .ok_or_else(|| not_found("Note", note.to_string()))?
                 .edit(body)?;
@@ -313,7 +314,7 @@ async fn run_note(document: &Document, command: NoteCommands) -> Result<(), CliE
         }
         NoteCommands::Delete { note } => {
             document
-                .query(ArchivedNoteById(note))
+                .query(query::ArchivedNoteById(note))
                 .await?
                 .ok_or_else(|| not_found("Archived note", note.to_string()))?;
             document.execute(vec![Command::DeleteNote(note)]).await?;
@@ -323,35 +324,35 @@ async fn run_note(document: &Document, command: NoteCommands) -> Result<(), CliE
         }
         NoteCommands::List { archived, deleted } => {
             let notes = if deleted {
-                document.query(DeletedNoteSummaries).await?
+                document.query(query::DeletedNoteSummaries).await?
             } else if archived {
-                document.query(ArchivedNoteSummaries).await?
+                document.query(query::ArchivedNoteSummaries).await?
             } else {
-                document.query(NoteSummaries).await?
+                document.query(query::NoteSummaries).await?
             };
             print_summaries(notes);
         }
         NoteCommands::Read { archived, note } => {
             if archived {
                 let note = document
-                    .query(ArchivedNoteById(note))
+                    .query(query::ArchivedNoteById(note))
                     .await?
                     .ok_or_else(|| not_found("Note", note.to_string()))?;
                 print!("{}", note.body());
             } else {
                 let note = document
-                    .query(NoteById(note))
+                    .query(query::NoteById(note))
                     .await?
                     .ok_or_else(|| not_found("Note", note.to_string()))?;
                 print!("{}", note.body());
             }
         }
         NoteCommands::Search { text } => {
-            print_summaries(document.query(NoteSearch(text)).await?);
+            print_summaries(document.query(query::NoteSearch(text)).await?);
         }
         NoteCommands::Unarchive { note } => {
             let note = document
-                .query(ArchivedNoteById(note))
+                .query(query::ArchivedNoteById(note))
                 .await?
                 .ok_or_else(|| not_found("Note", note.to_string()))?
                 .unarchive();
@@ -377,7 +378,7 @@ async fn run_collection(document: &Document, command: CollectionCommands) -> Res
         }
         CollectionCommands::Delete { collection } => {
             document
-                .query(CollectionById(collection))
+                .query(query::CollectionById(collection))
                 .await?
                 .ok_or_else(|| not_found("Collection", collection.to_string()))?;
             document
@@ -391,9 +392,9 @@ async fn run_collection(document: &Document, command: CollectionCommands) -> Res
         }
         CollectionCommands::List { deleted } => {
             let collections = if deleted {
-                document.query(DeletedCollections).await?
+                document.query(query::DeletedCollections).await?
             } else {
-                document.query(Collections).await?
+                document.query(query::Collections).await?
             };
             for collection in collections {
                 println!("{}\t{}", collection.id(), collection.name());
@@ -401,14 +402,14 @@ async fn run_collection(document: &Document, command: CollectionCommands) -> Res
         }
         CollectionCommands::Read { collection } => {
             let collection = document
-                .query(CollectionById(collection))
+                .query(query::CollectionById(collection))
                 .await?
                 .ok_or_else(|| not_found("Collection", collection.to_string()))?;
             print!("{}", collection.name());
         }
         CollectionCommands::Rename { collection, name } => {
             let mut collection = document
-                .query(CollectionById(collection))
+                .query(query::CollectionById(collection))
                 .await?
                 .ok_or_else(|| not_found("Collection", collection.to_string()))?;
             collection.set_name(&name);
@@ -424,7 +425,7 @@ async fn run_record(document: &Document, command: RecordCommands) -> Result<(), 
     match command {
         RecordCommands::Add { collection } => {
             let collection = document
-                .query(CollectionById(collection))
+                .query(query::CollectionById(collection))
                 .await?
                 .ok_or_else(|| not_found("Collection", collection.to_string()))?;
             let record = collection.new_record();
@@ -436,11 +437,11 @@ async fn run_record(document: &Document, command: RecordCommands) -> Result<(), 
         }
         RecordCommands::Move { record, collection } => {
             document
-                .query(RecordById(record))
+                .query(query::RecordById(record))
                 .await?
                 .ok_or_else(|| not_found("Record", record.to_string()))?;
             document
-                .query(CollectionById(collection))
+                .query(query::CollectionById(collection))
                 .await?
                 .ok_or_else(|| not_found("Collection", collection.to_string()))?;
             document
@@ -449,7 +450,7 @@ async fn run_record(document: &Document, command: RecordCommands) -> Result<(), 
         }
         RecordCommands::Delete { record } => {
             document
-                .query(RecordById(record))
+                .query(query::RecordById(record))
                 .await?
                 .ok_or_else(|| not_found("Record", record.to_string()))?;
             document
@@ -466,15 +467,17 @@ async fn run_record(document: &Document, command: RecordCommands) -> Result<(), 
             deleted,
         } => {
             document
-                .query(CollectionById(collection))
+                .query(query::CollectionById(collection))
                 .await?
                 .ok_or_else(|| not_found("Collection", collection.to_string()))?;
             let records = if deleted {
                 document
-                    .query(DeletedRecordsByCollection(collection))
+                    .query(query::DeletedRecordsByCollection(collection))
                     .await?
             } else {
-                document.query(RecordsByCollection(collection)).await?
+                document
+                    .query(query::RecordsByCollection(collection))
+                    .await?
             };
             for record in records {
                 println!("{}\t{}", record.id(), record.collection_id());
@@ -482,7 +485,7 @@ async fn run_record(document: &Document, command: RecordCommands) -> Result<(), 
         }
         RecordCommands::Read { record } => {
             let record = document
-                .query(RecordById(record))
+                .query(query::RecordById(record))
                 .await?
                 .ok_or_else(|| not_found("Record", record.to_string()))?;
             print!("{}\t{}", record.id(), record.collection_id());
@@ -510,7 +513,7 @@ async fn run_field_def(document: &Document, command: FieldDefCommands) -> Result
         }
         FieldDefCommands::Delete { definition } => {
             document
-                .query(FieldDefById(definition))
+                .query(query::FieldDefById(definition))
                 .await?
                 .ok_or_else(|| not_found("Field definition", definition.to_string()))?;
             document
@@ -524,9 +527,9 @@ async fn run_field_def(document: &Document, command: FieldDefCommands) -> Result
         }
         FieldDefCommands::List { deleted } => {
             let field_defs = if deleted {
-                document.query(DeletedFieldDefs).await?
+                document.query(query::DeletedFieldDefs).await?
             } else {
-                document.query(FieldDefs).await?
+                document.query(query::FieldDefs).await?
             };
             for field_def in field_defs {
                 println!(
@@ -539,14 +542,14 @@ async fn run_field_def(document: &Document, command: FieldDefCommands) -> Result
         }
         FieldDefCommands::Read { definition } => {
             let field_def = document
-                .query(FieldDefById(definition))
+                .query(query::FieldDefById(definition))
                 .await?
                 .ok_or_else(|| not_found("Field definition", definition.to_string()))?;
             print!("{}\t{}", field_def_kind(&field_def), field_def.name());
         }
         FieldDefCommands::Rename { definition, name } => {
             let mut field_def = document
-                .query(FieldDefById(definition))
+                .query(query::FieldDefById(definition))
                 .await?
                 .ok_or_else(|| not_found("Field definition", definition.to_string()))?;
             match &mut field_def {
@@ -570,15 +573,15 @@ async fn run_field(document: &Document, command: FieldCommands) -> Result<(), Cl
     match command {
         FieldCommands::Delete { record, definition } => {
             document
-                .query(RecordById(record))
+                .query(query::RecordById(record))
                 .await?
                 .ok_or_else(|| not_found("Record", record.to_string()))?;
             document
-                .query(FieldDefById(definition))
+                .query(query::FieldDefById(definition))
                 .await?
                 .ok_or_else(|| not_found("Field definition", definition.to_string()))?;
             document
-                .query(FieldByKey(FieldKey(record, definition)))
+                .query(query::FieldByKey(FieldKey(record, definition)))
                 .await?
                 .ok_or_else(|| not_found("Field", format!("{record}/{definition}")))?;
             document
@@ -596,11 +599,11 @@ async fn run_field(document: &Document, command: FieldCommands) -> Result<(), Cl
             value,
         } => {
             let stored_record = document
-                .query(RecordById(record))
+                .query(query::RecordById(record))
                 .await?
                 .ok_or_else(|| not_found("Record", record.to_string()))?;
             let field_def = document
-                .query(FieldDefById(definition))
+                .query(query::FieldDefById(definition))
                 .await?
                 .ok_or_else(|| not_found("Field definition", definition.to_string()))?;
             let field = match field_def {
@@ -648,13 +651,13 @@ async fn run_field(document: &Document, command: FieldCommands) -> Result<(), Cl
         }
         FieldCommands::List { record, deleted } => {
             document
-                .query(RecordById(record))
+                .query(query::RecordById(record))
                 .await?
                 .ok_or_else(|| not_found("Record", record.to_string()))?;
             let fields = if deleted {
-                document.query(DeletedFieldsByRecord(record)).await?
+                document.query(query::DeletedFieldsByRecord(record)).await?
             } else {
-                document.query(FieldsByRecord(record)).await?
+                document.query(query::FieldsByRecord(record)).await?
             };
             for field in fields {
                 println!(
@@ -667,15 +670,15 @@ async fn run_field(document: &Document, command: FieldCommands) -> Result<(), Cl
         }
         FieldCommands::Read { record, definition } => {
             document
-                .query(RecordById(record))
+                .query(query::RecordById(record))
                 .await?
                 .ok_or_else(|| not_found("Record", record.to_string()))?;
             document
-                .query(FieldDefById(definition))
+                .query(query::FieldDefById(definition))
                 .await?
                 .ok_or_else(|| not_found("Field definition", definition.to_string()))?;
             let field = document
-                .query(FieldByKey(FieldKey(record, definition)))
+                .query(query::FieldByKey(FieldKey(record, definition)))
                 .await?
                 .ok_or_else(|| not_found("Field", format!("{record}/{definition}")))?;
             print!("{}", field_value(&field));

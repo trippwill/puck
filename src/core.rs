@@ -25,14 +25,48 @@
 //! assert_eq!(field.val(), "alpha-01");
 //! ```
 
-// TODO: Remove
-#![allow(dead_code)]
 #![deny(missing_docs)]
 
 mod collection;
 mod field;
 mod note;
 mod record;
+
+/// Commonly used domain types.
+pub mod prelude {
+    pub use super::collection::{Collection, CollectionId};
+    pub use super::field::{
+        AnyField,
+        AnyFieldDef,
+        Boolean,
+        Date,
+        Field,
+        FieldDef,
+        FieldDefId,
+        FieldKey,
+        FieldType,
+        Integer,
+        Text,
+        Time,
+        Timestamp,
+    };
+    pub use super::note::{
+        Archive,
+        ArchiveNote,
+        MAX_PREVIEW_CHARS,
+        Note,
+        NoteError,
+        NoteId,
+        NoteState,
+        NoteSummary,
+        Pile,
+        PileNote,
+    };
+    pub use super::record::{Record, RecordId};
+}
+
+#[doc(inline)]
+pub use prelude::*;
 
 macro_rules! uuidv7_id {
     ($name:ident, $doc:literal) => {
@@ -75,17 +109,4 @@ macro_rules! uuidv7_id {
         }
     };
 }
-
-#[doc(inline)]
 pub(crate) use uuidv7_id;
-
-#[doc(inline)]
-pub use self::prelude::*;
-
-/// Commonly used domain types.
-pub mod prelude {
-    pub use super::super::core::collection::prelude::*;
-    pub use super::super::core::field::prelude::*;
-    pub use super::super::core::note::prelude::*;
-    pub use super::super::core::record::prelude::*;
-}

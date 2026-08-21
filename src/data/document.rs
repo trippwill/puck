@@ -11,9 +11,9 @@ use tokio_rusqlite::{Connection, OpenFlags};
 
 use super::command::Command;
 use super::migration as mig;
+use super::query_trait::Query;
 use super::version::SchemaVersion;
 use crate::core::NoteError;
-use crate::data::query::Query;
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"PUCK");
 
@@ -288,19 +288,8 @@ mod tests {
     use tokio_rusqlite::params;
 
     use super::*;
-    use crate::core::prelude::*;
-    use crate::data::query::{
-        CollectionById,
-        Collections,
-        FieldByKey,
-        FieldDefById,
-        FieldDefs,
-        FieldsByRecord,
-        NoteById,
-        NoteSummaries,
-        RecordById,
-        RecordsByCollection,
-    };
+    use crate::core::*;
+    use crate::data::query;
 
     #[test]
     fn invalid_application_id_is_rejected() {
@@ -391,7 +380,10 @@ mod tests {
 
         let document = Document::open(&path).await.unwrap();
         assert_eq!(document.version(), mig::CURRENT_VERSION);
-        assert_eq!(document.query(NoteById(id)).await.unwrap(), Some(note));
+        assert_eq!(
+            document.query(query::NoteById(id)).await.unwrap(),
+            Some(note)
+        );
 
         let user_version = document
             .conn
@@ -429,11 +421,21 @@ mod tests {
             .await
             .unwrap();
 
-        let stored = document.query(NoteById(older_id)).await.unwrap().unwrap();
+        let stored = document
+            .query(query::NoteById(older_id))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(stored, older);
-        assert_eq!(document.query(NoteById(NoteId::new())).await.unwrap(), None);
+        assert_eq!(
+            document
+                .query(query::NoteById(NoteId::new()))
+                .await
+                .unwrap(),
+            None
+        );
 
-        let summaries = document.query(NoteSummaries).await.unwrap();
+        let summaries = document.query(query::NoteSummaries).await.unwrap();
         assert_eq!(
             summaries
                 .iter()
@@ -516,18 +518,18 @@ mod tests {
         let other_text_field = other_record.new_field(&text_def, String::from("other"));
         let text_key = text_field.key();
 
-        assert!(document.query(Collections).await.unwrap().is_empty());
-        assert!(document.query(FieldDefs).await.unwrap().is_empty());
+        assert!(document.query(query::Collections).await.unwrap().is_empty());
+        assert!(document.query(query::FieldDefs).await.unwrap().is_empty());
         assert!(
             document
-                .query(RecordsByCollection(collection_id))
+                .query(query::RecordsByCollection(collection_id))
                 .await
                 .unwrap()
                 .is_empty()
         );
         assert!(
             document
-                .query(FieldsByRecord(record_id))
+                .query(query::FieldsByRecord(record_id))
                 .await
                 .unwrap()
                 .is_empty()
@@ -562,7 +564,7 @@ mod tests {
         expected_collection_ids.sort();
         assert_eq!(
             document
-                .query(Collections)
+                .query(query::Collections)
                 .await
                 .unwrap()
                 .into_iter()
@@ -575,7 +577,7 @@ mod tests {
         expected_record_ids.sort();
         assert_eq!(
             document
-                .query(RecordsByCollection(collection_id))
+                .query(query::RecordsByCollection(collection_id))
                 .await
                 .unwrap()
                 .into_iter()
@@ -585,7 +587,7 @@ mod tests {
         );
         assert_eq!(
             document
-                .query(RecordsByCollection(other_collection_id))
+                .query(query::RecordsByCollection(other_collection_id))
                 .await
                 .unwrap()
                 .into_iter()
@@ -605,7 +607,7 @@ mod tests {
         expected_def_ids.sort();
         assert_eq!(
             document
-                .query(FieldDefs)
+                .query(query::FieldDefs)
                 .await
                 .unwrap()
                 .into_iter()
@@ -625,7 +627,7 @@ mod tests {
         expected_field_def_ids.sort();
         assert_eq!(
             document
-                .query(FieldsByRecord(record_id))
+                .query(query::FieldsByRecord(record_id))
                 .await
                 .unwrap()
                 .into_iter()
@@ -635,14 +637,14 @@ mod tests {
         );
         assert!(
             document
-                .query(FieldsByRecord(second_record_id))
+                .query(query::FieldsByRecord(second_record_id))
                 .await
                 .unwrap()
                 .is_empty()
         );
         assert_eq!(
             document
-                .query(FieldsByRecord(other_record_id))
+                .query(query::FieldsByRecord(other_record_id))
                 .await
                 .unwrap()
                 .into_iter()
@@ -652,7 +654,7 @@ mod tests {
         );
 
         let stored_collection = document
-            .query(CollectionById(collection_id))
+            .query(query::CollectionById(collection_id))
             .await
             .unwrap()
             .unwrap();
@@ -660,7 +662,7 @@ mod tests {
         assert_eq!(stored_collection.name(), "Values");
 
         let stored_record = document
-            .query(RecordById(record_id))
+            .query(query::RecordById(record_id))
             .await
             .unwrap()
             .unwrap();
@@ -668,65 +670,65 @@ mod tests {
         assert_eq!(stored_record.collection_id(), collection_id);
 
         assert!(matches!(
-            document.query(FieldDefById(text_id)).await.unwrap(),
+            document.query(query::FieldDefById(text_id)).await.unwrap(),
             Some(AnyFieldDef::Text(def)) if def.name() == "Text"
         ));
         assert!(matches!(
-            document.query(FieldDefById(boolean_id)).await.unwrap(),
+            document.query(query::FieldDefById(boolean_id)).await.unwrap(),
             Some(AnyFieldDef::Boolean(def)) if def.name() == "Boolean"
         ));
         assert!(matches!(
-            document.query(FieldDefById(integer_id)).await.unwrap(),
+            document.query(query::FieldDefById(integer_id)).await.unwrap(),
             Some(AnyFieldDef::Integer(def)) if def.name() == "Integer"
         ));
         assert!(matches!(
-            document.query(FieldDefById(date_id)).await.unwrap(),
+            document.query(query::FieldDefById(date_id)).await.unwrap(),
             Some(AnyFieldDef::Date(def)) if def.name() == "Date"
         ));
         assert!(matches!(
-            document.query(FieldDefById(time_id)).await.unwrap(),
+            document.query(query::FieldDefById(time_id)).await.unwrap(),
             Some(AnyFieldDef::Time(def)) if def.name() == "Time"
         ));
         assert!(matches!(
-            document.query(FieldDefById(timestamp_id)).await.unwrap(),
+            document.query(query::FieldDefById(timestamp_id)).await.unwrap(),
             Some(AnyFieldDef::Timestamp(def)) if def.name() == "Timestamp"
         ));
 
         assert!(matches!(
-            document.query(FieldByKey(text_key)).await.unwrap(),
+            document.query(query::FieldByKey(text_key)).await.unwrap(),
             Some(AnyField::Text(field)) if field.val() == "hello"
         ));
         assert!(matches!(
             document
-                .query(FieldByKey(FieldKey(record_id, boolean_id)))
+                .query(query::FieldByKey(FieldKey(record_id, boolean_id)))
                 .await
                 .unwrap(),
             Some(AnyField::Boolean(field)) if *field.val()
         ));
         assert!(matches!(
             document
-                .query(FieldByKey(FieldKey(record_id, integer_id)))
+                .query(query::FieldByKey(FieldKey(record_id, integer_id)))
                 .await
                 .unwrap(),
             Some(AnyField::Integer(field)) if *field.val() == -42
         ));
         assert!(matches!(
             document
-                .query(FieldByKey(FieldKey(record_id, date_id)))
+                .query(query::FieldByKey(FieldKey(record_id, date_id)))
                 .await
                 .unwrap(),
             Some(AnyField::Date(field)) if *field.val() == date
         ));
         assert!(matches!(
             document
-                .query(FieldByKey(FieldKey(record_id, time_id)))
+                .query(query::FieldByKey(FieldKey(record_id, time_id)))
                 .await
                 .unwrap(),
             Some(AnyField::Time(field)) if *field.val() == time
         ));
         assert!(matches!(
             document
-                .query(FieldByKey(FieldKey(record_id, timestamp_id)))
+                .query(query::FieldByKey(FieldKey(record_id, timestamp_id)))
                 .await
                 .unwrap(),
             Some(AnyField::Timestamp(field)) if *field.val() == timestamp
@@ -734,7 +736,7 @@ mod tests {
 
         assert_eq!(
             document
-                .query(CollectionById(CollectionId::new()))
+                .query(query::CollectionById(CollectionId::new()))
                 .await
                 .unwrap()
                 .map(|collection| collection.id()),
@@ -742,7 +744,7 @@ mod tests {
         );
         assert_eq!(
             document
-                .query(RecordById(RecordId::new()))
+                .query(query::RecordById(RecordId::new()))
                 .await
                 .unwrap()
                 .map(|record| record.id()),
@@ -750,14 +752,14 @@ mod tests {
         );
         assert!(
             document
-                .query(FieldDefById(FieldDefId::new()))
+                .query(query::FieldDefById(FieldDefId::new()))
                 .await
                 .unwrap()
                 .is_none()
         );
         assert!(
             document
-                .query(FieldByKey(FieldKey(record_id, FieldDefId::new())))
+                .query(query::FieldByKey(FieldKey(record_id, FieldDefId::new())))
                 .await
                 .unwrap()
                 .is_none()
@@ -780,13 +782,13 @@ mod tests {
             .unwrap();
         assert!(
             document
-                .query(FieldByKey(FieldKey(record_id, boolean_id)))
+                .query(query::FieldByKey(FieldKey(record_id, boolean_id)))
                 .await
                 .is_err()
         );
         assert!(
             document
-                .query(FieldByKey(FieldKey(record_id, timestamp_id)))
+                .query(query::FieldByKey(FieldKey(record_id, timestamp_id)))
                 .await
                 .is_err()
         );
@@ -808,7 +810,7 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert_eq!(document.query(NoteById(id)).await.unwrap(), None);
+        assert_eq!(document.query(query::NoteById(id)).await.unwrap(), None);
 
         drop(document);
         std::fs::remove_file(path).unwrap();
@@ -851,22 +853,22 @@ mod tests {
             .unwrap();
 
         let retained_collection = document
-            .query(CollectionById(deleted_collection_id))
+            .query(query::CollectionById(deleted_collection_id))
             .await
             .unwrap()
             .unwrap();
         let retained_record = document
-            .query(RecordById(deleted_record_id))
+            .query(query::RecordById(deleted_record_id))
             .await
             .unwrap()
             .unwrap();
         let retained_def = document
-            .query(FieldDefById(deleted_def_id))
+            .query(query::FieldDefById(deleted_def_id))
             .await
             .unwrap()
             .unwrap();
         let retained_field = document
-            .query(FieldByKey(deleted_field_key))
+            .query(query::FieldByKey(deleted_field_key))
             .await
             .unwrap()
             .unwrap();
@@ -1043,7 +1045,7 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            document.query(NoteById(NoteId::restore(id))).await,
+            document.query(query::NoteById(NoteId::restore(id))).await,
             Err(DocumentError::InvalidNote(NoteError::InvalidRevision))
         ));
 

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Charles Willis <5862883+trippwill@users.noreply.github.com>
 // SPDX-License-Identifier: MPL-2.0
 
+//! Built-in document queries.
+
 use tokio_rusqlite::OptionalExtension;
 use tokio_rusqlite::rusqlite::types::Type as SqlType;
 use tokio_rusqlite::rusqlite::{
@@ -11,45 +13,15 @@ use tokio_rusqlite::rusqlite::{
     params,
 };
 
-use super::adapter::prelude::*;
+use super::adapter::StoredNote;
 use super::document::DocumentError;
+use super::query_trait::Query;
 use crate::core::prelude::*;
 use crate::data::SqlFieldType;
 
-pub mod prelude {
-    pub use super::{
-        ArchivedNoteById,
-        ArchivedNoteSummaries,
-        CollectionById,
-        Collections,
-        DeletedCollections,
-        DeletedFieldDefs,
-        DeletedFieldsByRecord,
-        DeletedNoteSummaries,
-        DeletedRecordsByCollection,
-        FieldByKey,
-        FieldDefById,
-        FieldDefs,
-        FieldsByRecord,
-        NoteById,
-        NoteSearch,
-        NoteSummaries,
-        RecordById,
-        RecordsByCollection,
-    };
-}
-
-/// A query to be executed against the document.
-pub trait Query: Send + 'static {
-    type Output: Send + 'static;
-
-    /// Executes the query against the given database connection.
-    /// # Errors
-    /// Returns an error if the query fails or persisted data is invalid.
-    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError>;
-}
-
 /// A query for a pile note by ID.
+///
+/// Produces an `Option` containing [`PileNote`].
 #[derive(Debug, Clone)]
 pub struct NoteById(pub NoteId);
 impl Query for NoteById {
@@ -64,6 +36,8 @@ impl Query for NoteById {
 }
 
 /// A query for an archived note by ID.
+///
+/// Produces an `Option` containing [`ArchiveNote`].
 #[derive(Debug, Clone)]
 pub struct ArchivedNoteById(pub NoteId);
 impl Query for ArchivedNoteById {
@@ -78,6 +52,8 @@ impl Query for ArchivedNoteById {
 }
 
 /// A query for a list of note summaries for all non-archived notes.
+///
+/// Produces a `Vec` of [`NoteSummary`] values.
 pub struct NoteSummaries;
 impl Query for NoteSummaries {
     type Output = Vec<NoteSummary>;
@@ -96,6 +72,8 @@ impl Query for NoteSummaries {
 }
 
 /// A query for active note summaries whose bodies contain a literal string.
+///
+/// Produces a `Vec` of [`NoteSummary`] values.
 pub struct NoteSearch(pub String);
 impl Query for NoteSearch {
     type Output = Vec<NoteSummary>;
@@ -126,6 +104,8 @@ impl Query for NoteSearch {
 }
 
 /// A query for a list of note summaries for all archived notes.
+///
+/// Produces a `Vec` of [`NoteSummary`] values.
 pub struct ArchivedNoteSummaries;
 impl Query for ArchivedNoteSummaries {
     type Output = Vec<NoteSummary>;
@@ -144,6 +124,8 @@ impl Query for ArchivedNoteSummaries {
 }
 
 /// A query for summaries of notes marked for deletion.
+///
+/// Produces a `Vec` of [`NoteSummary`] values.
 pub struct DeletedNoteSummaries;
 impl Query for DeletedNoteSummaries {
     type Output = Vec<NoteSummary>;
@@ -162,6 +144,8 @@ impl Query for DeletedNoteSummaries {
 }
 
 /// A query for a collection by ID.
+///
+/// Produces an `Option` containing [`Collection`].
 pub struct CollectionById(pub CollectionId);
 impl Query for CollectionById {
     type Output = Option<Collection>;
@@ -181,6 +165,8 @@ impl Query for CollectionById {
 }
 
 /// A query for all collections ordered by ID.
+///
+/// Produces a `Vec` of [`Collection`] values.
 pub struct Collections;
 impl Query for Collections {
     type Output = Vec<Collection>;
@@ -191,6 +177,8 @@ impl Query for Collections {
 }
 
 /// A query for all collections marked for deletion ordered by ID.
+///
+/// Produces a `Vec` of [`Collection`] values.
 pub struct DeletedCollections;
 impl Query for DeletedCollections {
     type Output = Vec<Collection>;
@@ -201,6 +189,8 @@ impl Query for DeletedCollections {
 }
 
 /// A query for a record by ID.
+///
+/// Produces an `Option` containing [`Record`].
 pub struct RecordById(pub RecordId);
 impl Query for RecordById {
     type Output = Option<Record>;
@@ -224,6 +214,8 @@ impl Query for RecordById {
 }
 
 /// A query for records in a collection ordered by ID.
+///
+/// Produces a `Vec` of [`Record`] values.
 pub struct RecordsByCollection(pub CollectionId);
 impl Query for RecordsByCollection {
     type Output = Vec<Record>;
@@ -234,6 +226,8 @@ impl Query for RecordsByCollection {
 }
 
 /// A query for records marked for deletion in an active collection.
+///
+/// Produces a `Vec` of [`Record`] values.
 pub struct DeletedRecordsByCollection(pub CollectionId);
 impl Query for DeletedRecordsByCollection {
     type Output = Vec<Record>;
@@ -244,6 +238,8 @@ impl Query for DeletedRecordsByCollection {
 }
 
 /// A query for a field definition by ID.
+///
+/// Produces an `Option` containing [`AnyFieldDef`].
 pub struct FieldDefById(pub FieldDefId);
 impl Query for FieldDefById {
     type Output = Option<AnyFieldDef>;
@@ -260,6 +256,8 @@ impl Query for FieldDefById {
 }
 
 /// A query for all field definitions ordered by ID.
+///
+/// Produces a `Vec` of [`AnyFieldDef`] values.
 pub struct FieldDefs;
 impl Query for FieldDefs {
     type Output = Vec<AnyFieldDef>;
@@ -270,6 +268,8 @@ impl Query for FieldDefs {
 }
 
 /// A query for all field definitions marked for deletion ordered by ID.
+///
+/// Produces a `Vec` of [`AnyFieldDef`] values.
 pub struct DeletedFieldDefs;
 impl Query for DeletedFieldDefs {
     type Output = Vec<AnyFieldDef>;
@@ -280,6 +280,8 @@ impl Query for DeletedFieldDefs {
 }
 
 /// A query for a field by its record and definition IDs.
+///
+/// Produces an `Option` containing [`AnyField`].
 pub struct FieldByKey(pub FieldKey);
 impl Query for FieldByKey {
     type Output = Option<AnyField>;
@@ -309,6 +311,8 @@ impl Query for FieldByKey {
 }
 
 /// A query for fields on a record ordered by definition ID.
+///
+/// Produces a `Vec` of [`AnyField`] values.
 pub struct FieldsByRecord(pub RecordId);
 impl Query for FieldsByRecord {
     type Output = Vec<AnyField>;
@@ -319,6 +323,8 @@ impl Query for FieldsByRecord {
 }
 
 /// A query for fields marked for deletion on an active record.
+///
+/// Produces a `Vec` of [`AnyField`] values.
 pub struct DeletedFieldsByRecord(pub RecordId);
 impl Query for DeletedFieldsByRecord {
     type Output = Vec<AnyField>;

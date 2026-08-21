@@ -3,13 +3,8 @@
 
 //! Ordered collections of structured records.
 
-use super::record::prelude::*;
-use crate::core::uuidv7_id;
-
-/// Collection types.
-pub mod prelude {
-    pub use super::{Collection, CollectionId};
-}
+use super::record::Record;
+use super::uuidv7_id;
 
 uuidv7_id!(CollectionId, "A unique collection identifier.");
 

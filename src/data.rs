@@ -1,24 +1,26 @@
 // SPDX-FileCopyrightText: 2026 Charles Willis <5862883+trippwill@users.noreply.github.com>
 // SPDX-License-Identifier: MPL-2.0
 
-#![allow(dead_code)]
+//! Persistence types for puck documents.
 
 mod adapter;
 mod command;
 mod document;
 mod migration;
-mod query;
+mod query_trait;
 mod version;
 
+pub mod query;
+
+/// Commonly used persistence types.
 pub mod prelude {
     pub use super::command::Command;
     pub use super::document::{Document, DocumentError};
-    pub use super::query::prelude::*;
     pub use super::version::SchemaVersion;
 }
 
 #[doc(inline)]
-pub use self::prelude::*;
+pub use prelude::*;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SqlFieldTypeError {
