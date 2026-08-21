@@ -23,4 +23,6 @@ jobs:
       - uses: jdx/mise-action@v3
         with:
           version: 2026.8.10
+          install_args: rust
+      - run: mise install
       - run: mise run ci
