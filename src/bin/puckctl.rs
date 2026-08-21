@@ -118,6 +118,11 @@ enum CollectionCommands {
 enum RecordCommands {
     /// Add a record to a collection.
     Add { collection: CollectionId },
+    /// Move a record to another collection.
+    Move {
+        record: RecordId,
+        collection: CollectionId,
+    },
     /// Mark a record for deletion.
     Delete { record: RecordId },
     /// Restore a deleted record.
@@ -428,6 +433,19 @@ async fn run_record(document: &Document, command: RecordCommands) -> Result<(), 
                 .execute(vec![Command::UpsertRecord(record)])
                 .await?;
             println!("{id}");
+        }
+        RecordCommands::Move { record, collection } => {
+            document
+                .query(RecordById(record))
+                .await?
+                .ok_or_else(|| not_found("Record", record.to_string()))?;
+            document
+                .query(CollectionById(collection))
+                .await?
+                .ok_or_else(|| not_found("Collection", collection.to_string()))?;
+            document
+                .execute(vec![Command::MoveRecord(record, collection)])
+                .await?;
         }
         RecordCommands::Delete { record } => {
             document

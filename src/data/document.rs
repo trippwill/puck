@@ -901,6 +901,24 @@ mod tests {
                 .await
                 .is_err()
         );
+        assert!(
+            document
+                .execute(vec![Command::MoveRecord(
+                    deleted_record_id,
+                    active_collection_id,
+                )])
+                .await
+                .is_err()
+        );
+        assert!(
+            document
+                .execute(vec![Command::MoveRecord(
+                    active_record_id,
+                    deleted_collection_id,
+                )])
+                .await
+                .is_err()
+        );
 
         let record_with_deleted_parent = Record::restore(RecordId::new(), deleted_collection_id);
         assert!(

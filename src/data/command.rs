@@ -26,6 +26,8 @@ pub enum Command {
     UpsertCollection(Collection),
     /// Creates or updates a record.
     UpsertRecord(Record),
+    /// Moves a record to an active collection.
+    MoveRecord(RecordId, CollectionId),
     /// Creates or updates a field definition.
     UpsertFieldDef(AnyFieldDef),
     /// Creates or updates a field value.
@@ -61,6 +63,7 @@ impl Command {
             Command::UnarchiveNote(note) => Command::set_archived(tx, note.id(), false),
             Command::UpsertCollection(collection) => Command::upsert_collection(tx, &collection),
             Command::UpsertRecord(record) => Command::upsert_record(tx, &record),
+            Command::MoveRecord(record, collection) => Command::move_record(tx, record, collection),
             Command::UpsertFieldDef(field_def) => Command::upsert_field_def(tx, &field_def),
             Command::UpsertField(field) => Command::upsert_field(tx, &field),
             Command::DeleteCollection(id) => Command::delete_collection(tx, id),
@@ -181,6 +184,33 @@ impl Command {
             WHERE records.deleted = 0
             ",
             params![*record.id().as_uuid(), *record.collection_id().as_uuid()],
+        )?;
+        require_one(changed)
+    }
+
+    fn move_record(
+        tx: &Transaction,
+        record: RecordId,
+        collection: CollectionId,
+    ) -> SqlResult<usize> {
+        let changed = tx.execute(
+            r"
+            UPDATE records
+            SET collection_id = ?2
+            WHERE id = ?1
+                AND deleted = 0
+                AND EXISTS (
+                    SELECT 1
+                    FROM collections
+                    WHERE id = records.collection_id AND deleted = 0
+                )
+                AND EXISTS (
+                    SELECT 1
+                    FROM collections
+                    WHERE id = ?2 AND deleted = 0
+                )
+            ",
+            params![*record.as_uuid(), *collection.as_uuid()],
         )?;
         require_one(changed)
     }

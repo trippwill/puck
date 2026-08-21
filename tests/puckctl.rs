@@ -293,6 +293,35 @@ fn structured_data_can_be_managed() {
 }
 
 #[test]
+fn records_can_be_moved() {
+    let document = TestDocument::new();
+    let source = document.id(&["collection", "add", "Source"]);
+    let destination = document.id(&["collection", "add", "Destination"]);
+    let record = document.id(&["record", "add", &source]);
+    let definition = document.id(&["field-def", "add", "text", "Name"]);
+    document.success(&["field", "set", &record, &definition, "value"]);
+
+    document.success(&["record", "move", &record, &destination]);
+
+    assert!(document.text(&["record", "list", &source]).is_empty());
+    assert_eq!(
+        document.text(&["record", "read", &record]),
+        format!("{record}\t{destination}")
+    );
+    assert_eq!(
+        document.text(&["field", "read", &record, &definition]),
+        "value"
+    );
+
+    document.success(&["collection", "delete", &source]);
+    assert_not_found(
+        &document.failure(&["record", "move", &record, &source]),
+        "Collection",
+        &source,
+    );
+}
+
+#[test]
 fn structured_data_is_marked_then_cleaned() {
     let document = TestDocument::new();
     let collection = document.id(&["collection", "add", "Values"]);
