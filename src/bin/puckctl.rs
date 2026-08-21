@@ -178,7 +178,7 @@ async fn main() -> ExitCode {
     match run(args.file, args.command).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            tracing::error!("{error}");
+            eprintln!("{error}");
             ExitCode::FAILURE
         }
     }
