@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use puck::core::prelude::*;
 use puck::data::prelude::*;
 use thiserror::Error;
@@ -110,7 +110,7 @@ enum RecordCommands {
 #[derive(Debug, Subcommand)]
 enum FieldDefCommands {
     /// Add a field definition.
-    Add { kind: String, name: String },
+    Add { kind: FieldKind, name: String },
     /// List field definitions.
     List,
     /// Read a field definition.
@@ -120,6 +120,16 @@ enum FieldDefCommands {
         definition: FieldDefId,
         name: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum FieldKind {
+    Text,
+    Boolean,
+    Integer,
+    Date,
+    Time,
+    Timestamp,
 }
 
 #[derive(Debug, Subcommand)]
@@ -179,9 +189,9 @@ async fn run(file: PathBuf, command: Commands) -> Result<(), CliError> {
             let document = Document::open(file).await?;
             match command {
                 Commands::Note { command } => run_note(&document, command).await,
-                Commands::Collection { command } => run_collection(&document, command),
-                Commands::Record { command } => run_record(&document, command),
-                Commands::FieldDef { command } => run_field_def(&document, command),
+                Commands::Collection { command } => run_collection(&document, command).await,
+                Commands::Record { command } => run_record(&document, command).await,
+                Commands::FieldDef { command } => run_field_def(&document, command).await,
                 Commands::Field { command } => run_field(&document, command),
                 Commands::New | Commands::Check => unreachable!(),
             }
@@ -281,20 +291,144 @@ fn not_found(kind: &'static str, id: String) -> CliError {
     CliError::NotFound { kind, id }
 }
 
-fn run_collection(_document: &Document, _command: CollectionCommands) -> Result<(), CliError> {
-    Err(CliError::NotImplemented("collection"))
+async fn run_collection(document: &Document, command: CollectionCommands) -> Result<(), CliError> {
+    match command {
+        CollectionCommands::Add { name } => {
+            let collection = Collection::new(&name);
+            let id = collection.id();
+            document
+                .execute(vec![Command::UpsertCollection(collection)])
+                .await?;
+            println!("{id}");
+        }
+        CollectionCommands::List => {
+            for collection in document.query(Collections).await? {
+                println!("{}\t{}", collection.id(), collection.name());
+            }
+        }
+        CollectionCommands::Read { collection } => {
+            let collection = document
+                .query(CollectionById(collection))
+                .await?
+                .ok_or_else(|| not_found("Collection", collection.to_string()))?;
+            print!("{}", collection.name());
+        }
+        CollectionCommands::Rename { collection, name } => {
+            let mut collection = document
+                .query(CollectionById(collection))
+                .await?
+                .ok_or_else(|| not_found("Collection", collection.to_string()))?;
+            collection.set_name(&name);
+            document
+                .execute(vec![Command::UpsertCollection(collection)])
+                .await?;
+        }
+    }
+    Ok(())
 }
 
-fn run_record(_document: &Document, _command: RecordCommands) -> Result<(), CliError> {
-    Err(CliError::NotImplemented("record"))
+async fn run_record(document: &Document, command: RecordCommands) -> Result<(), CliError> {
+    match command {
+        RecordCommands::Add { collection } => {
+            let collection = document
+                .query(CollectionById(collection))
+                .await?
+                .ok_or_else(|| not_found("Collection", collection.to_string()))?;
+            let record = collection.new_record();
+            let id = record.id();
+            document
+                .execute(vec![Command::UpsertRecord(record)])
+                .await?;
+            println!("{id}");
+        }
+        RecordCommands::List { collection } => {
+            document
+                .query(CollectionById(collection))
+                .await?
+                .ok_or_else(|| not_found("Collection", collection.to_string()))?;
+            for record in document.query(RecordsByCollection(collection)).await? {
+                println!("{}\t{}", record.id(), record.collection_id());
+            }
+        }
+        RecordCommands::Read { record } => {
+            let record = document
+                .query(RecordById(record))
+                .await?
+                .ok_or_else(|| not_found("Record", record.to_string()))?;
+            print!("{}\t{}", record.id(), record.collection_id());
+        }
+    }
+    Ok(())
 }
 
-fn run_field_def(_document: &Document, _command: FieldDefCommands) -> Result<(), CliError> {
-    Err(CliError::NotImplemented("field definition"))
+async fn run_field_def(document: &Document, command: FieldDefCommands) -> Result<(), CliError> {
+    match command {
+        FieldDefCommands::Add { kind, name } => {
+            let field_def = match kind {
+                FieldKind::Text => AnyFieldDef::Text(Text::def(&name)),
+                FieldKind::Boolean => AnyFieldDef::Boolean(Boolean::def(&name)),
+                FieldKind::Integer => AnyFieldDef::Integer(Integer::def(&name)),
+                FieldKind::Date => AnyFieldDef::Date(Date::def(&name)),
+                FieldKind::Time => AnyFieldDef::Time(Time::def(&name)),
+                FieldKind::Timestamp => AnyFieldDef::Timestamp(Timestamp::def(&name)),
+            };
+            let id = field_def.id();
+            document
+                .execute(vec![Command::UpsertFieldDef(field_def)])
+                .await?;
+            println!("{id}");
+        }
+        FieldDefCommands::List => {
+            for field_def in document.query(FieldDefs).await? {
+                println!(
+                    "{}\t{}\t{}",
+                    field_def.id(),
+                    field_def_kind(&field_def),
+                    field_def.name()
+                );
+            }
+        }
+        FieldDefCommands::Read { definition } => {
+            let field_def = document
+                .query(FieldDefById(definition))
+                .await?
+                .ok_or_else(|| not_found("Field definition", definition.to_string()))?;
+            print!("{}\t{}", field_def_kind(&field_def), field_def.name());
+        }
+        FieldDefCommands::Rename { definition, name } => {
+            let mut field_def = document
+                .query(FieldDefById(definition))
+                .await?
+                .ok_or_else(|| not_found("Field definition", definition.to_string()))?;
+            match &mut field_def {
+                AnyFieldDef::Text(def) => def.set_name(&name),
+                AnyFieldDef::Boolean(def) => def.set_name(&name),
+                AnyFieldDef::Integer(def) => def.set_name(&name),
+                AnyFieldDef::Date(def) => def.set_name(&name),
+                AnyFieldDef::Time(def) => def.set_name(&name),
+                AnyFieldDef::Timestamp(def) => def.set_name(&name),
+            }
+            document
+                .execute(vec![Command::UpsertFieldDef(field_def)])
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 fn run_field(_document: &Document, _command: FieldCommands) -> Result<(), CliError> {
     Err(CliError::NotImplemented("field"))
+}
+
+fn field_def_kind(field_def: &AnyFieldDef) -> &'static str {
+    match field_def {
+        AnyFieldDef::Text(_) => "text",
+        AnyFieldDef::Boolean(_) => "boolean",
+        AnyFieldDef::Integer(_) => "integer",
+        AnyFieldDef::Date(_) => "date",
+        AnyFieldDef::Time(_) => "time",
+        AnyFieldDef::Timestamp(_) => "timestamp",
+    }
 }
 
 fn print_summaries(notes: Vec<NoteSummary>) {

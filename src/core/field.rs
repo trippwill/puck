@@ -235,7 +235,9 @@ impl AnyFieldDef {
         }
     }
 
-    pub(crate) fn name(&self) -> &str {
+    /// Returns the display name.
+    #[must_use]
+    pub fn name(&self) -> &str {
         match self {
             AnyFieldDef::Text(def) => def.name(),
             AnyFieldDef::Boolean(def) => def.name(),
