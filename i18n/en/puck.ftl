@@ -4,6 +4,7 @@ repository = Repository
 view = View
 new-document = New Document
 open-document = Open Document
+close-document = Close Document
 puck-documents = Puck documents
 landing-description = Create a document or open an existing one.
 invalid-document-path = The selected file is not a local path.

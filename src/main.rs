@@ -1,7 +1,20 @@
 // SPDX-FileCopyrightText: 2026 Charles Willis <5862883+trippwill@users.noreply.github.com>
 // SPDX-License-Identifier: MPL-2.0
 
+use std::path::PathBuf;
+
+use clap::Parser;
+
+#[derive(Parser)]
+#[command(version, about)]
+struct Args {
+    /// The Puck document to open.
+    document: Option<PathBuf>,
+}
+
 fn main() -> cosmic::iced::Result {
+    let args = Args::parse();
+
     // Get the system's preferred languages.
     let requested_languages = i18n_embed::DesktopLanguageRequester::requested_languages();
 
@@ -15,6 +28,5 @@ fn main() -> cosmic::iced::Result {
             .min_height(180.0),
     );
 
-    // Starts the application's event loop with `()` as the application's flags.
-    cosmic::app::run::<puck::app::AppModel>(settings, ())
+    cosmic::app::run::<puck::app::AppModel>(settings, args.document)
 }

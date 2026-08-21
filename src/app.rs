@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use cosmic::app::context_drawer;
 use cosmic::dialog::file_chooser::{self, FileFilter};
@@ -45,6 +46,7 @@ pub enum Message {
     ArchiveNote,
     ArchivedNoteLoaded(NoteId, Result<Option<ArchiveNote>, String>),
     CancelEditing,
+    CloseDocument,
     ClearSearch,
     ClearError,
     DocumentLoaded(Result<Option<Document>, String>),
@@ -87,7 +89,7 @@ enum SelectedNote {
 
 impl cosmic::Application for AppModel {
     type Executor = cosmic::executor::Default;
-    type Flags = ();
+    type Flags = Option<PathBuf>;
     type Message = Message;
 
     const APP_ID: &'static str = "dev.terranul.puck";
@@ -102,8 +104,9 @@ impl cosmic::Application for AppModel {
 
     fn init(
         core: cosmic::Core,
-        _flags: Self::Flags,
+        document_path: Self::Flags,
     ) -> (Self, Task<cosmic::Action<Self::Message>>) {
+        let busy = document_path.is_some();
         let mut app = Self {
             core,
             context_page: ContextPage::default(),
@@ -123,10 +126,20 @@ impl cosmic::Application for AppModel {
             edit_draft: text_editor::Content::new(),
             search: String::new(),
             editing: false,
-            busy: false,
+            busy,
             error: None,
         };
-        let command = app.update_title();
+        let command = match document_path {
+            Some(path) => cosmic::task::future(async move {
+                Message::DocumentLoaded(
+                    Document::open(path)
+                        .await
+                        .map(Some)
+                        .map_err(|error| error.to_string()),
+                )
+            }),
+            None => app.update_title(),
+        };
 
         (app, command)
     }
@@ -146,6 +159,12 @@ impl cosmic::Application for AppModel {
 
     fn header_end(&self) -> Vec<Element<'_, Self::Message>> {
         vec![
+            widget::button::text(fl!("close-document"))
+                .on_press_maybe(
+                    (self.document.is_some() && !self.busy && !self.editing)
+                        .then_some(Message::CloseDocument),
+                )
+                .into(),
             widget::button::text(fl!("new-document"))
                 .on_press_maybe((!self.busy && !self.editing).then_some(Message::NewDocument))
                 .into(),
@@ -305,6 +324,21 @@ impl cosmic::Application for AppModel {
                     Ok(None) => {}
                     Err(error) => self.error = Some(error),
                 }
+            }
+            Message::CloseDocument => {
+                if self.busy || self.editing {
+                    return Task::none();
+                }
+                self.document = None;
+                self.list = NoteList::Pile;
+                self.summaries.clear();
+                self.selected_id = None;
+                self.selected_note = None;
+                self.draft = text_editor::Content::new();
+                self.edit_draft = text_editor::Content::new();
+                self.search.clear();
+                self.error = None;
+                return self.update_title();
             }
             Message::SummariesLoaded(list, result) => {
                 if list != self.list {
