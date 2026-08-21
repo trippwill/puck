@@ -138,6 +138,7 @@ enum FieldCommands {
     Set {
         record: RecordId,
         definition: FieldDefId,
+        #[arg(allow_hyphen_values = true)]
         value: String,
     },
     /// List fields on a record.
@@ -160,8 +161,11 @@ enum CliError {
     #[error("{kind} {id} not found")]
     NotFound { kind: &'static str, id: String },
 
-    #[error("{0} commands are not implemented yet")]
-    NotImplemented(&'static str),
+    #[error("invalid value {value:?}: expected {expected}")]
+    InvalidValue {
+        value: String,
+        expected: &'static str,
+    },
 }
 
 #[tokio::main]
@@ -192,7 +196,7 @@ async fn run(file: PathBuf, command: Commands) -> Result<(), CliError> {
                 Commands::Collection { command } => run_collection(&document, command).await,
                 Commands::Record { command } => run_record(&document, command).await,
                 Commands::FieldDef { command } => run_field_def(&document, command).await,
-                Commands::Field { command } => run_field(&document, command),
+                Commands::Field { command } => run_field(&document, command).await,
                 Commands::New | Commands::Check => unreachable!(),
             }
         }
@@ -416,8 +420,102 @@ async fn run_field_def(document: &Document, command: FieldDefCommands) -> Result
     Ok(())
 }
 
-fn run_field(_document: &Document, _command: FieldCommands) -> Result<(), CliError> {
-    Err(CliError::NotImplemented("field"))
+async fn run_field(document: &Document, command: FieldCommands) -> Result<(), CliError> {
+    match command {
+        FieldCommands::Set {
+            record,
+            definition,
+            value,
+        } => {
+            let stored_record = document
+                .query(RecordById(record))
+                .await?
+                .ok_or_else(|| not_found("Record", record.to_string()))?;
+            let field_def = document
+                .query(FieldDefById(definition))
+                .await?
+                .ok_or_else(|| not_found("Field definition", definition.to_string()))?;
+            let field = match field_def {
+                AnyFieldDef::Text(def) => AnyField::Text(stored_record.new_field(&def, value)),
+                AnyFieldDef::Boolean(def) => {
+                    let parsed = match value.as_str() {
+                        "true" => true,
+                        "false" => false,
+                        _ => return Err(invalid_value(&value, "boolean (true or false)")),
+                    };
+                    AnyField::Boolean(stored_record.new_field(&def, parsed))
+                }
+                AnyFieldDef::Integer(def) => {
+                    let parsed = value
+                        .parse()
+                        .map_err(|_| invalid_value(&value, "integer"))?;
+                    AnyField::Integer(stored_record.new_field(&def, parsed))
+                }
+                AnyFieldDef::Date(def) => {
+                    let format =
+                        time::format_description::parse_borrowed::<2>("[year]-[month]-[day]")
+                            .expect("valid date format");
+                    let parsed = time::Date::parse(&value, &format)
+                        .map_err(|_| invalid_value(&value, "date (YYYY-MM-DD)"))?;
+                    AnyField::Date(stored_record.new_field(&def, parsed))
+                }
+                AnyFieldDef::Time(def) => {
+                    let format =
+                        time::format_description::parse_borrowed::<2>("[hour]:[minute]:[second]")
+                            .expect("valid time format");
+                    let parsed = time::Time::parse(&value, &format)
+                        .map_err(|_| invalid_value(&value, "time (HH:MM:SS)"))?;
+                    AnyField::Time(stored_record.new_field(&def, parsed))
+                }
+                AnyFieldDef::Timestamp(def) => {
+                    let milliseconds = value
+                        .parse()
+                        .map_err(|_| invalid_value(&value, "timestamp (Unix milliseconds)"))?;
+                    let parsed = time::Timestamp::from_milliseconds(milliseconds)
+                        .map_err(|_| invalid_value(&value, "timestamp (Unix milliseconds)"))?;
+                    AnyField::Timestamp(stored_record.new_field(&def, parsed))
+                }
+            };
+            document.execute(vec![Command::UpsertField(field)]).await?;
+        }
+        FieldCommands::List { record } => {
+            document
+                .query(RecordById(record))
+                .await?
+                .ok_or_else(|| not_found("Record", record.to_string()))?;
+            for field in document.query(FieldsByRecord(record)).await? {
+                println!(
+                    "{}\t{}\t{}",
+                    field.def_id(),
+                    field_kind(&field),
+                    list_field_value(&field)
+                );
+            }
+        }
+        FieldCommands::Read { record, definition } => {
+            document
+                .query(RecordById(record))
+                .await?
+                .ok_or_else(|| not_found("Record", record.to_string()))?;
+            document
+                .query(FieldDefById(definition))
+                .await?
+                .ok_or_else(|| not_found("Field definition", definition.to_string()))?;
+            let field = document
+                .query(FieldByKey((record, definition)))
+                .await?
+                .ok_or_else(|| not_found("Field", format!("{record}/{definition}")))?;
+            print!("{}", field_value(&field));
+        }
+    }
+    Ok(())
+}
+
+fn invalid_value(value: &str, expected: &'static str) -> CliError {
+    CliError::InvalidValue {
+        value: value.to_owned(),
+        expected,
+    }
 }
 
 fn field_def_kind(field_def: &AnyFieldDef) -> &'static str {
@@ -428,6 +526,45 @@ fn field_def_kind(field_def: &AnyFieldDef) -> &'static str {
         AnyFieldDef::Date(_) => "date",
         AnyFieldDef::Time(_) => "time",
         AnyFieldDef::Timestamp(_) => "timestamp",
+    }
+}
+
+fn field_kind(field: &AnyField) -> &'static str {
+    match field {
+        AnyField::Text(_) => "text",
+        AnyField::Boolean(_) => "boolean",
+        AnyField::Integer(_) => "integer",
+        AnyField::Date(_) => "date",
+        AnyField::Time(_) => "time",
+        AnyField::Timestamp(_) => "timestamp",
+    }
+}
+
+fn field_value(field: &AnyField) -> String {
+    match field {
+        AnyField::Text(field) => field.val().clone(),
+        AnyField::Boolean(field) => field.val().to_string(),
+        AnyField::Integer(field) => field.val().to_string(),
+        AnyField::Date(field) => field.val().to_string(),
+        AnyField::Time(field) => format!(
+            "{:02}:{:02}:{:02}",
+            field.val().hour(),
+            field.val().minute(),
+            field.val().second()
+        ),
+        AnyField::Timestamp(field) => field.val().as_milliseconds().to_string(),
+    }
+}
+
+fn list_field_value(field: &AnyField) -> String {
+    match field {
+        AnyField::Text(field) => field
+            .val()
+            .replace('\\', "\\\\")
+            .replace('\t', "\\t")
+            .replace('\r', "\\r")
+            .replace('\n', "\\n"),
+        _ => field_value(field),
     }
 }
 
