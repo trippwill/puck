@@ -2,6 +2,7 @@
 idiomatic_version_file_enable_tools = ["rust"]
 
 [tools]
+"aqua:cargo-bins/cargo-binstall" = "1.21.1"
 "cargo:cargo-deny" = "0.20.2"
 "cargo:cargo-nextest" = "0.9.140"
 "pipx:reuse" = "6.2.0"
