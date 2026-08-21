@@ -812,6 +812,7 @@ mod tests {
         let deleted_collection = Collection::new("Deleted collection");
         let deleted_collection_id = deleted_collection.id();
         let active_collection = Collection::new("Active collection");
+        let active_collection_id = active_collection.id();
         let deleted_record = active_collection.new_record();
         let deleted_record_id = deleted_record.id();
         let active_record = active_collection.new_record();
@@ -932,6 +933,45 @@ mod tests {
                 .await
                 .is_err()
         );
+
+        document
+            .execute(vec![Command::DeleteCollection(active_collection_id)])
+            .await
+            .unwrap();
+        assert!(
+            document
+                .execute(vec![Command::UndeleteRecord(deleted_record_id)])
+                .await
+                .is_err()
+        );
+        document
+            .execute(vec![
+                Command::UndeleteCollection(active_collection_id),
+                Command::UndeleteRecord(deleted_record_id),
+            ])
+            .await
+            .unwrap();
+
+        document
+            .execute(vec![Command::DeleteFieldDef(active_def_id)])
+            .await
+            .unwrap();
+        assert!(
+            document
+                .execute(vec![Command::UndeleteField(deleted_field_key)])
+                .await
+                .is_err()
+        );
+        document
+            .execute(vec![
+                Command::UndeleteFieldDef(active_def_id),
+                Command::UndeleteField(deleted_field_key),
+                Command::UndeleteFieldDef(deleted_def_id),
+                Command::UndeleteCollection(deleted_collection_id),
+                Command::UndeleteNote(note_id),
+            ])
+            .await
+            .unwrap();
 
         drop(document);
         std::fs::remove_file(path).unwrap();

@@ -141,7 +141,20 @@ fn notes_can_be_managed() {
             .text(&["note", "list", "--archived"])
             .contains(&first)
     );
+    assert!(
+        document
+            .text(&["note", "list", "--deleted"])
+            .contains(&first)
+    );
     assert_eq!(document.count("notes", Some(true)), 1);
+    document.success(&["note", "undelete", &first]);
+    assert!(
+        document
+            .text(&["note", "list", "--archived"])
+            .contains(&first)
+    );
+    assert!(document.text(&["note", "list", "--deleted"]).is_empty());
+    document.success(&["note", "delete", &first]);
     document.success(&["clean"]);
     assert_eq!(document.count("notes", None), 1);
 }
@@ -300,7 +313,18 @@ fn structured_data_is_marked_then_cleaned() {
         "Field",
         &format!("{record}/{first_def}"),
     );
+    assert!(
+        document
+            .text(&["field", "list", &record, "--deleted"])
+            .contains(&first_def)
+    );
     assert_eq!(document.count("fields", Some(true)), 1);
+    document.success(&["field", "undelete", &record, &first_def]);
+    assert_eq!(
+        document.text(&["field", "read", &record, &first_def]),
+        "first"
+    );
+    document.success(&["field", "delete", &record, &first_def]);
 
     document.success(&["field-def", "delete", &second_def]);
     assert_not_found(
@@ -308,9 +332,20 @@ fn structured_data_is_marked_then_cleaned() {
         "Field definition",
         &second_def,
     );
+    assert!(
+        document
+            .text(&["field-def", "list", "--deleted"])
+            .contains(&second_def)
+    );
     assert!(document.text(&["field", "list", &record]).is_empty());
     assert_eq!(document.count("field_defs", Some(true)), 1);
-    assert_eq!(document.count("fields", Some(true)), 2);
+    assert_eq!(document.count("fields", Some(true)), 1);
+    document.success(&["field-def", "undelete", &second_def]);
+    assert_eq!(
+        document.text(&["field", "read", &record, &second_def]),
+        "second"
+    );
+    document.success(&["field-def", "delete", &second_def]);
 
     document.success(&["clean"]);
     assert_eq!(document.count("fields", None), 0);
@@ -321,8 +356,19 @@ fn structured_data_is_marked_then_cleaned() {
     document.success(&["field", "set", &record, &first_def, "first"]);
     document.success(&["record", "delete", &record]);
     assert!(document.text(&["record", "list", &collection]).is_empty());
+    assert!(
+        document
+            .text(&["record", "list", &collection, "--deleted"])
+            .contains(&record)
+    );
     assert_eq!(document.count("records", Some(true)), 1);
-    assert_eq!(document.count("fields", Some(true)), 1);
+    assert_eq!(document.count("fields", Some(true)), 0);
+    document.success(&["record", "undelete", &record]);
+    assert_eq!(
+        document.text(&["field", "read", &record, &first_def]),
+        "first"
+    );
+    document.success(&["record", "delete", &record]);
     document.success(&["clean"]);
     assert_eq!(document.count("records", None), 0);
     assert_eq!(document.count("fields", None), 0);
@@ -332,14 +378,25 @@ fn structured_data_is_marked_then_cleaned() {
     document.success(&["field", "set", &record, &first_def, "first"]);
     document.success(&["collection", "delete", &collection]);
     assert!(document.text(&["collection", "list"]).is_empty());
+    assert!(
+        document
+            .text(&["collection", "list", "--deleted"])
+            .contains(&collection)
+    );
     assert_not_found(
         &document.failure(&["record", "read", &record]),
         "Record",
         &record,
     );
     assert_eq!(document.count("collections", Some(true)), 1);
-    assert_eq!(document.count("records", Some(true)), 1);
-    assert_eq!(document.count("fields", Some(true)), 1);
+    assert_eq!(document.count("records", Some(true)), 0);
+    assert_eq!(document.count("fields", Some(true)), 0);
+    document.success(&["collection", "undelete", &collection]);
+    assert_eq!(
+        document.text(&["field", "read", &record, &first_def]),
+        "first"
+    );
+    document.success(&["collection", "delete", &collection]);
 
     document.success(&["clean"]);
     assert_eq!(document.count("collections", None), 0);

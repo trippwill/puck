@@ -22,6 +22,11 @@ pub mod prelude {
         ArchivedNoteSummaries,
         CollectionById,
         Collections,
+        DeletedCollections,
+        DeletedFieldDefs,
+        DeletedFieldsByRecord,
+        DeletedNoteSummaries,
+        DeletedRecordsByCollection,
         FieldByKey,
         FieldDefById,
         FieldDefs,
@@ -78,7 +83,7 @@ impl Query for NoteSummaries {
     type Output = Vec<NoteSummary>;
 
     fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
-        stored_notes(conn, false)?
+        stored_notes(conn, false, false)?
             .into_iter()
             .map(|stored| {
                 stored
@@ -126,7 +131,25 @@ impl Query for ArchivedNoteSummaries {
     type Output = Vec<NoteSummary>;
 
     fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
-        stored_notes(conn, true)?
+        stored_notes(conn, true, false)?
+            .into_iter()
+            .map(|stored| {
+                stored
+                    .into_archive_note()
+                    .map(|note| NoteSummary::from(&note))
+                    .map_err(Into::into)
+            })
+            .collect()
+    }
+}
+
+/// A query for summaries of notes marked for deletion.
+pub struct DeletedNoteSummaries;
+impl Query for DeletedNoteSummaries {
+    type Output = Vec<NoteSummary>;
+
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
+        stored_notes(conn, true, true)?
             .into_iter()
             .map(|stored| {
                 stored
@@ -163,17 +186,17 @@ impl Query for Collections {
     type Output = Vec<Collection>;
 
     fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
-        let mut statement =
-            conn.prepare("SELECT id, name FROM collections WHERE deleted = 0 ORDER BY id")?;
-        statement
-            .query_map([], |row| {
-                Ok(Collection::restore(
-                    CollectionId::restore(row.get(0)?),
-                    &row.get::<_, String>(1)?,
-                ))
-            })?
-            .collect::<SqlResult<_>>()
-            .map_err(Into::into)
+        stored_collections(conn, false)
+    }
+}
+
+/// A query for all collections marked for deletion ordered by ID.
+pub struct DeletedCollections;
+impl Query for DeletedCollections {
+    type Output = Vec<Collection>;
+
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
+        stored_collections(conn, true)
     }
 }
 
@@ -184,7 +207,14 @@ impl Query for RecordById {
 
     fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
         conn.query_row(
-            "SELECT collection_id FROM records WHERE id = ?1 AND deleted = 0",
+            r"
+            SELECT records.collection_id
+            FROM records
+            JOIN collections ON collections.id = records.collection_id
+            WHERE records.id = ?1
+                AND records.deleted = 0
+                AND collections.deleted = 0
+            ",
             [*self.0.as_uuid()],
             |row| Ok(Record::restore(self.0, CollectionId::restore(row.get(0)?))),
         )
@@ -199,15 +229,17 @@ impl Query for RecordsByCollection {
     type Output = Vec<Record>;
 
     fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
-        let mut statement = conn.prepare(
-            "SELECT id FROM records WHERE collection_id = ?1 AND deleted = 0 ORDER BY id",
-        )?;
-        statement
-            .query_map([*self.0.as_uuid()], |row| {
-                Ok(Record::restore(RecordId::restore(row.get(0)?), self.0))
-            })?
-            .collect::<SqlResult<_>>()
-            .map_err(Into::into)
+        stored_records(conn, self.0, false)
+    }
+}
+
+/// A query for records marked for deletion in an active collection.
+pub struct DeletedRecordsByCollection(pub CollectionId);
+impl Query for DeletedRecordsByCollection {
+    type Output = Vec<Record>;
+
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
+        stored_records(conn, self.0, true)
     }
 }
 
@@ -233,12 +265,17 @@ impl Query for FieldDefs {
     type Output = Vec<AnyFieldDef>;
 
     fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
-        let mut statement =
-            conn.prepare("SELECT id, name, type FROM field_defs WHERE deleted = 0 ORDER BY id")?;
-        statement
-            .query_map([], read_field_def)?
-            .collect::<SqlResult<_>>()
-            .map_err(Into::into)
+        stored_field_defs(conn, false)
+    }
+}
+
+/// A query for all field definitions marked for deletion ordered by ID.
+pub struct DeletedFieldDefs;
+impl Query for DeletedFieldDefs {
+    type Output = Vec<AnyFieldDef>;
+
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
+        stored_field_defs(conn, true)
     }
 }
 
@@ -251,9 +288,17 @@ impl Query for FieldByKey {
         let FieldKey(record_id, def_id) = self.0;
         conn.query_row(
             r"
-            SELECT record_id, field_def_id, type, value
+            SELECT fields.record_id, fields.field_def_id, fields.type, fields.value
             FROM fields
-            WHERE record_id = ?1 AND field_def_id = ?2 AND deleted = 0
+            JOIN records ON records.id = fields.record_id
+            JOIN collections ON collections.id = records.collection_id
+            JOIN field_defs ON field_defs.id = fields.field_def_id
+            WHERE fields.record_id = ?1
+                AND fields.field_def_id = ?2
+                AND fields.deleted = 0
+                AND records.deleted = 0
+                AND collections.deleted = 0
+                AND field_defs.deleted = 0
             ",
             params![*record_id.as_uuid(), *def_id.as_uuid()],
             read_field,
@@ -269,19 +314,100 @@ impl Query for FieldsByRecord {
     type Output = Vec<AnyField>;
 
     fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
-        let mut statement = conn.prepare(
-            r"
-            SELECT record_id, field_def_id, type, value
-            FROM fields
-            WHERE record_id = ?1 AND deleted = 0
-            ORDER BY field_def_id
-            ",
-        )?;
-        statement
-            .query_map([*self.0.as_uuid()], read_field)?
-            .collect::<SqlResult<_>>()
-            .map_err(Into::into)
+        stored_fields(conn, self.0, false)
     }
+}
+
+/// A query for fields marked for deletion on an active record.
+pub struct DeletedFieldsByRecord(pub RecordId);
+impl Query for DeletedFieldsByRecord {
+    type Output = Vec<AnyField>;
+
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
+        stored_fields(conn, self.0, true)
+    }
+}
+
+fn stored_collections(
+    conn: &SyncConnection,
+    deleted: bool,
+) -> Result<Vec<Collection>, DocumentError> {
+    let mut statement =
+        conn.prepare("SELECT id, name FROM collections WHERE deleted = ?1 ORDER BY id")?;
+    statement
+        .query_map([deleted], |row| {
+            Ok(Collection::restore(
+                CollectionId::restore(row.get(0)?),
+                &row.get::<_, String>(1)?,
+            ))
+        })?
+        .collect::<SqlResult<_>>()
+        .map_err(Into::into)
+}
+
+fn stored_records(
+    conn: &SyncConnection,
+    collection_id: CollectionId,
+    deleted: bool,
+) -> Result<Vec<Record>, DocumentError> {
+    let mut statement = conn.prepare(
+        r"
+        SELECT records.id
+        FROM records
+        JOIN collections ON collections.id = records.collection_id
+        WHERE records.collection_id = ?1
+            AND records.deleted = ?2
+            AND collections.deleted = 0
+        ORDER BY records.id
+        ",
+    )?;
+    statement
+        .query_map(params![*collection_id.as_uuid(), deleted], |row| {
+            Ok(Record::restore(
+                RecordId::restore(row.get(0)?),
+                collection_id,
+            ))
+        })?
+        .collect::<SqlResult<_>>()
+        .map_err(Into::into)
+}
+
+fn stored_field_defs(
+    conn: &SyncConnection,
+    deleted: bool,
+) -> Result<Vec<AnyFieldDef>, DocumentError> {
+    let mut statement =
+        conn.prepare("SELECT id, name, type FROM field_defs WHERE deleted = ?1 ORDER BY id")?;
+    statement
+        .query_map([deleted], read_field_def)?
+        .collect::<SqlResult<_>>()
+        .map_err(Into::into)
+}
+
+fn stored_fields(
+    conn: &SyncConnection,
+    record_id: RecordId,
+    deleted: bool,
+) -> Result<Vec<AnyField>, DocumentError> {
+    let mut statement = conn.prepare(
+        r"
+        SELECT fields.record_id, fields.field_def_id, fields.type, fields.value
+        FROM fields
+        JOIN records ON records.id = fields.record_id
+        JOIN collections ON collections.id = records.collection_id
+        JOIN field_defs ON field_defs.id = fields.field_def_id
+        WHERE fields.record_id = ?1
+            AND fields.deleted = ?2
+            AND records.deleted = 0
+            AND collections.deleted = 0
+            AND field_defs.deleted = 0
+        ORDER BY fields.field_def_id
+        ",
+    )?;
+    statement
+        .query_map(params![*record_id.as_uuid(), deleted], read_field)?
+        .collect::<SqlResult<_>>()
+        .map_err(Into::into)
 }
 
 fn read_field_def(row: &SqlRow<'_>) -> SqlResult<AnyFieldDef> {
@@ -359,15 +485,21 @@ fn stored_note(conn: &SyncConnection, id: NoteId, archived: bool) -> SqlResult<O
     .optional()
 }
 
-fn stored_notes(conn: &SyncConnection, archived: bool) -> SqlResult<Vec<StoredNote>> {
+fn stored_notes(
+    conn: &SyncConnection,
+    archived: bool,
+    deleted: bool,
+) -> SqlResult<Vec<StoredNote>> {
     let mut statement = conn.prepare(
         r"
         SELECT id, body, revision, created_at, updated_at
         FROM notes
-        WHERE archived = ?1 AND deleted = 0
+        WHERE archived = ?1 AND deleted = ?2
         ORDER BY updated_at DESC, id DESC
         ",
     )?;
 
-    statement.query_map([archived], StoredNote::read)?.collect()
+    statement
+        .query_map(params![archived, deleted], StoredNote::read)?
+        .collect()
 }

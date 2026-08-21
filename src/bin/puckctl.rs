@@ -67,11 +67,16 @@ enum NoteCommands {
     Edit { note: NoteId, body: String },
     /// Mark an archived note for deletion.
     Delete { note: NoteId },
+    /// Restore a deleted note to the archive.
+    Undelete { note: NoteId },
     /// List pile notes.
     List {
         /// List archived notes instead.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "deleted")]
         archived: bool,
+        /// List notes marked for deletion instead.
+        #[arg(long)]
+        deleted: bool,
     },
     /// Read a pile note.
     Read {
@@ -90,10 +95,16 @@ enum NoteCommands {
 enum CollectionCommands {
     /// Add a collection.
     Add { name: String },
-    /// Mark a collection and its contents for deletion.
+    /// Mark a collection for deletion.
     Delete { collection: CollectionId },
+    /// Restore a deleted collection.
+    Undelete { collection: CollectionId },
     /// List collections.
-    List,
+    List {
+        /// List collections marked for deletion instead.
+        #[arg(long)]
+        deleted: bool,
+    },
     /// Read a collection.
     Read { collection: CollectionId },
     /// Rename a collection.
@@ -107,10 +118,17 @@ enum CollectionCommands {
 enum RecordCommands {
     /// Add a record to a collection.
     Add { collection: CollectionId },
-    /// Mark a record and its fields for deletion.
+    /// Mark a record for deletion.
     Delete { record: RecordId },
+    /// Restore a deleted record.
+    Undelete { record: RecordId },
     /// List records in a collection.
-    List { collection: CollectionId },
+    List {
+        collection: CollectionId,
+        /// List records marked for deletion instead.
+        #[arg(long)]
+        deleted: bool,
+    },
     /// Read a record.
     Read { record: RecordId },
 }
@@ -119,10 +137,16 @@ enum RecordCommands {
 enum FieldDefCommands {
     /// Add a field definition.
     Add { kind: FieldKind, name: String },
-    /// Mark a field definition and its values for deletion.
+    /// Mark a field definition for deletion.
     Delete { definition: FieldDefId },
+    /// Restore a deleted field definition.
+    Undelete { definition: FieldDefId },
     /// List field definitions.
-    List,
+    List {
+        /// List field definitions marked for deletion instead.
+        #[arg(long)]
+        deleted: bool,
+    },
     /// Read a field definition.
     Read { definition: FieldDefId },
     /// Rename a field definition.
@@ -149,6 +173,11 @@ enum FieldCommands {
         record: RecordId,
         definition: FieldDefId,
     },
+    /// Restore a deleted field value.
+    Undelete {
+        record: RecordId,
+        definition: FieldDefId,
+    },
     /// Set a field value.
     Set {
         record: RecordId,
@@ -157,7 +186,12 @@ enum FieldCommands {
         value: String,
     },
     /// List fields on a record.
-    List { record: RecordId },
+    List {
+        record: RecordId,
+        /// List fields marked for deletion instead.
+        #[arg(long)]
+        deleted: bool,
+    },
     /// Read a field value.
     Read {
         record: RecordId,
@@ -279,8 +313,13 @@ async fn run_note(document: &Document, command: NoteCommands) -> Result<(), CliE
                 .ok_or_else(|| not_found("Archived note", note.to_string()))?;
             document.execute(vec![Command::DeleteNote(note)]).await?;
         }
-        NoteCommands::List { archived } => {
-            let notes = if archived {
+        NoteCommands::Undelete { note } => {
+            document.execute(vec![Command::UndeleteNote(note)]).await?;
+        }
+        NoteCommands::List { archived, deleted } => {
+            let notes = if deleted {
+                document.query(DeletedNoteSummaries).await?
+            } else if archived {
                 document.query(ArchivedNoteSummaries).await?
             } else {
                 document.query(NoteSummaries).await?
@@ -340,8 +379,18 @@ async fn run_collection(document: &Document, command: CollectionCommands) -> Res
                 .execute(vec![Command::DeleteCollection(collection)])
                 .await?;
         }
-        CollectionCommands::List => {
-            for collection in document.query(Collections).await? {
+        CollectionCommands::Undelete { collection } => {
+            document
+                .execute(vec![Command::UndeleteCollection(collection)])
+                .await?;
+        }
+        CollectionCommands::List { deleted } => {
+            let collections = if deleted {
+                document.query(DeletedCollections).await?
+            } else {
+                document.query(Collections).await?
+            };
+            for collection in collections {
                 println!("{}\t{}", collection.id(), collection.name());
             }
         }
@@ -389,12 +438,27 @@ async fn run_record(document: &Document, command: RecordCommands) -> Result<(), 
                 .execute(vec![Command::DeleteRecord(record)])
                 .await?;
         }
-        RecordCommands::List { collection } => {
+        RecordCommands::Undelete { record } => {
+            document
+                .execute(vec![Command::UndeleteRecord(record)])
+                .await?;
+        }
+        RecordCommands::List {
+            collection,
+            deleted,
+        } => {
             document
                 .query(CollectionById(collection))
                 .await?
                 .ok_or_else(|| not_found("Collection", collection.to_string()))?;
-            for record in document.query(RecordsByCollection(collection)).await? {
+            let records = if deleted {
+                document
+                    .query(DeletedRecordsByCollection(collection))
+                    .await?
+            } else {
+                document.query(RecordsByCollection(collection)).await?
+            };
+            for record in records {
                 println!("{}\t{}", record.id(), record.collection_id());
             }
         }
@@ -435,8 +499,18 @@ async fn run_field_def(document: &Document, command: FieldDefCommands) -> Result
                 .execute(vec![Command::DeleteFieldDef(definition)])
                 .await?;
         }
-        FieldDefCommands::List => {
-            for field_def in document.query(FieldDefs).await? {
+        FieldDefCommands::Undelete { definition } => {
+            document
+                .execute(vec![Command::UndeleteFieldDef(definition)])
+                .await?;
+        }
+        FieldDefCommands::List { deleted } => {
+            let field_defs = if deleted {
+                document.query(DeletedFieldDefs).await?
+            } else {
+                document.query(FieldDefs).await?
+            };
+            for field_def in field_defs {
                 println!(
                     "{}\t{}\t{}",
                     field_def.id(),
@@ -491,6 +565,11 @@ async fn run_field(document: &Document, command: FieldCommands) -> Result<(), Cl
                 .ok_or_else(|| not_found("Field", format!("{record}/{definition}")))?;
             document
                 .execute(vec![Command::DeleteField(FieldKey(record, definition))])
+                .await?;
+        }
+        FieldCommands::Undelete { record, definition } => {
+            document
+                .execute(vec![Command::UndeleteField(FieldKey(record, definition))])
                 .await?;
         }
         FieldCommands::Set {
@@ -549,12 +628,17 @@ async fn run_field(document: &Document, command: FieldCommands) -> Result<(), Cl
             };
             document.execute(vec![Command::UpsertField(field)]).await?;
         }
-        FieldCommands::List { record } => {
+        FieldCommands::List { record, deleted } => {
             document
                 .query(RecordById(record))
                 .await?
                 .ok_or_else(|| not_found("Record", record.to_string()))?;
-            for field in document.query(FieldsByRecord(record)).await? {
+            let fields = if deleted {
+                document.query(DeletedFieldsByRecord(record)).await?
+            } else {
+                document.query(FieldsByRecord(record)).await?
+            };
+            for field in fields {
                 println!(
                     "{}\t{}\t{}",
                     field.def_id(),
