@@ -803,6 +803,141 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn commands_reject_models_and_parents_marked_for_deletion() {
+        let path = std::env::temp_dir().join(format!("puck-{}.db", uuid::Uuid::now_v7()));
+        let document = Document::create(&path).await.unwrap();
+
+        let note = PileNote::create("Deleted note");
+        let note_id = note.id();
+        let deleted_collection = Collection::new("Deleted collection");
+        let deleted_collection_id = deleted_collection.id();
+        let active_collection = Collection::new("Active collection");
+        let deleted_record = active_collection.new_record();
+        let deleted_record_id = deleted_record.id();
+        let active_record = active_collection.new_record();
+        let active_record_id = active_record.id();
+        let deleted_def = Text::def("Deleted definition");
+        let deleted_def_id = deleted_def.id();
+        let active_def = Text::def("Active definition");
+        let active_def_id = active_def.id();
+        let deleted_field = active_record.new_field(&active_def, String::from("deleted"));
+        let deleted_field_key = deleted_field.key();
+
+        document
+            .execute(vec![
+                Command::AddNote(note.clone()),
+                Command::UpsertCollection(deleted_collection),
+                Command::UpsertCollection(active_collection),
+                Command::UpsertRecord(deleted_record),
+                Command::UpsertRecord(active_record),
+                Command::UpsertFieldDef(AnyFieldDef::Text(deleted_def)),
+                Command::UpsertFieldDef(AnyFieldDef::Text(active_def)),
+                Command::UpsertField(AnyField::Text(deleted_field)),
+            ])
+            .await
+            .unwrap();
+
+        let retained_collection = document
+            .query(CollectionById(deleted_collection_id))
+            .await
+            .unwrap()
+            .unwrap();
+        let retained_record = document
+            .query(RecordById(deleted_record_id))
+            .await
+            .unwrap()
+            .unwrap();
+        let retained_def = document
+            .query(FieldDefById(deleted_def_id))
+            .await
+            .unwrap()
+            .unwrap();
+        let retained_field = document
+            .query(FieldByKey(deleted_field_key))
+            .await
+            .unwrap()
+            .unwrap();
+
+        document
+            .execute(vec![
+                Command::ArchiveNote(note.clone().archive()),
+                Command::DeleteNote(note_id),
+                Command::DeleteCollection(deleted_collection_id),
+                Command::DeleteRecord(deleted_record_id),
+                Command::DeleteFieldDef(deleted_def_id),
+                Command::DeleteField(deleted_field_key),
+            ])
+            .await
+            .unwrap();
+
+        assert!(
+            document
+                .execute(vec![Command::UnarchiveNote(note)])
+                .await
+                .is_err()
+        );
+        assert!(
+            document
+                .execute(vec![Command::UpsertCollection(retained_collection)])
+                .await
+                .is_err()
+        );
+        assert!(
+            document
+                .execute(vec![Command::UpsertRecord(retained_record)])
+                .await
+                .is_err()
+        );
+        assert!(
+            document
+                .execute(vec![Command::UpsertFieldDef(retained_def)])
+                .await
+                .is_err()
+        );
+        assert!(
+            document
+                .execute(vec![Command::UpsertField(retained_field)])
+                .await
+                .is_err()
+        );
+
+        let record_with_deleted_parent = Record::restore(RecordId::new(), deleted_collection_id);
+        assert!(
+            document
+                .execute(vec![Command::UpsertRecord(record_with_deleted_parent)])
+                .await
+                .is_err()
+        );
+
+        let field_with_deleted_record = AnyField::Text(Field::<Text>::restore(
+            active_def_id,
+            deleted_record_id,
+            String::from("value"),
+        ));
+        assert!(
+            document
+                .execute(vec![Command::UpsertField(field_with_deleted_record)])
+                .await
+                .is_err()
+        );
+
+        let field_with_deleted_def = AnyField::Text(Field::<Text>::restore(
+            deleted_def_id,
+            active_record_id,
+            String::from("value"),
+        ));
+        assert!(
+            document
+                .execute(vec![Command::UpsertField(field_with_deleted_def)])
+                .await
+                .is_err()
+        );
+
+        drop(document);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
     async fn open_document_has_exclusive_access() {
         let path = std::env::temp_dir().join(format!("puck-{}.db", uuid::Uuid::now_v7()));
         let document = Document::create(&path).await.unwrap();

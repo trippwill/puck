@@ -81,7 +81,7 @@ impl Command {
             r"
             UPDATE notes
             SET body = ?2, revision = ?3, updated_at = ?4
-            WHERE id = ?1 AND archived = 0
+            WHERE id = ?1 AND archived = 0 AND deleted = 0
             ",
             params![
                 *note.id().as_uuid(),
@@ -102,7 +102,7 @@ impl Command {
             r"
             UPDATE notes
             SET archived = ?2
-            WHERE id = ?1 AND archived != ?2
+            WHERE id = ?1 AND archived != ?2 AND deleted = 0
             ",
             params![*id.as_uuid(), archived],
         )?;
@@ -126,27 +126,36 @@ impl Command {
     }
 
     fn upsert_collection(tx: &Transaction, collection: &Collection) -> SqlResult<usize> {
-        tx.execute(
+        let changed = tx.execute(
             r"
             INSERT INTO collections (id, name)
             VALUES (?1, ?2)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name
+            WHERE collections.deleted = 0
             ",
             params![*collection.id().as_uuid(), collection.name()],
-        )
+        )?;
+        require_one(changed)
     }
 
     fn upsert_record(tx: &Transaction, record: &Record) -> SqlResult<usize> {
-        tx.execute(
+        let changed = tx.execute(
             r"
             INSERT INTO records (id, collection_id)
-            VALUES (?1, ?2)
+            SELECT ?1, ?2
+            WHERE EXISTS (
+                SELECT 1
+                FROM collections
+                WHERE id = ?2 AND deleted = 0
+            )
             ON CONFLICT(id) DO UPDATE SET
                 collection_id = excluded.collection_id
+            WHERE records.deleted = 0
             ",
             params![*record.id().as_uuid(), *record.collection_id().as_uuid()],
-        )
+        )?;
+        require_one(changed)
     }
 
     fn upsert_field_def(tx: &Transaction, field_def: &AnyFieldDef) -> SqlResult<usize> {
@@ -159,15 +168,17 @@ impl Command {
             AnyFieldDef::Timestamp(_) => SqlFieldType::Timestamp,
         };
 
-        tx.execute(
+        let changed = tx.execute(
             r"
             INSERT INTO field_defs (id, name, type)
             VALUES (?1, ?2, ?3)
             ON CONFLICT(id, type) DO UPDATE SET
                 name = excluded.name
+            WHERE field_defs.deleted = 0
             ",
             params![*field_def.id().as_uuid(), field_def.name(), kind],
-        )
+        )?;
+        require_one(changed)
     }
 
     fn upsert_field(tx: &Transaction, field: &AnyField) -> SqlResult<usize> {
@@ -183,13 +194,24 @@ impl Command {
             ),
         };
 
-        tx.execute(
+        let changed = tx.execute(
             r"
             INSERT INTO fields (record_id, field_def_id, type, value)
-            VALUES (?1, ?2, ?3, ?4)
+            SELECT ?1, ?2, ?3, ?4
+            WHERE EXISTS (
+                SELECT 1
+                FROM records
+                WHERE id = ?1 AND deleted = 0
+            )
+            AND EXISTS (
+                SELECT 1
+                FROM field_defs
+                WHERE id = ?2 AND type = ?3 AND deleted = 0
+            )
             ON CONFLICT(record_id, field_def_id) DO UPDATE SET
                 type = excluded.type,
                 value = excluded.value
+            WHERE fields.deleted = 0
             ",
             params![
                 *field.record_id().as_uuid(),
@@ -197,7 +219,8 @@ impl Command {
                 kind,
                 value
             ],
-        )
+        )?;
+        require_one(changed)
     }
 
     fn delete_collection(tx: &Transaction, id: CollectionId) -> SqlResult<usize> {

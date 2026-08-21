@@ -290,6 +290,11 @@ fn structured_data_is_marked_then_cleaned() {
     document.success(&["field", "set", &record, &second_def, "second"]);
 
     document.success(&["field", "delete", &record, &first_def]);
+    assert!(
+        !document
+            .failure(&["field", "set", &record, &first_def, "replacement"])
+            .is_empty()
+    );
     assert_not_found(
         &document.failure(&["field", "read", &record, &first_def]),
         "Field",
