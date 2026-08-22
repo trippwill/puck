@@ -31,6 +31,7 @@ pub enum Message {
     SearchChanged(String),
     Select(NoteId),
     Show(NoteList),
+    StartStructure,
     SummariesLoaded(NoteList, Result<Vec<NoteSummary>, String>),
 }
 
@@ -92,6 +93,7 @@ impl AppModel {
             }
             Message::Select(id) => self.select_note(id),
             Message::Show(list) => self.show_notes(list),
+            Message::StartStructure => self.start_structure(),
             Message::SummariesLoaded(list, result) => self.summaries_loaded(&list, result),
         }
     }
@@ -447,7 +449,7 @@ impl AppModel {
             list = list.push(
                 widget::button(widget::text(preview))
                     .style(if selected {
-                        widget::button::primary
+                        crate::theme::selected
                     } else {
                         widget::button::text
                     })
@@ -519,7 +521,7 @@ impl AppModel {
         };
         let mut search_row = widget::Row::with_capacity(3).push(search).push(
             widget::button(widget::text(fl!("search-notes")))
-                .style(widget::button::primary)
+                .style(crate::theme::primary_pill)
                 .on_press_maybe(
                     (!self.busy && !self.editing).then_some(AppMessage::Notes(Message::Search)),
                 ),
@@ -564,7 +566,7 @@ impl AppModel {
                         widget::Row::with_capacity(2)
                             .push(
                                 widget::button(widget::text(fl!("save-note")))
-                                    .style(widget::button::primary)
+                                    .style(crate::theme::primary_pill)
                                     .on_press_maybe(
                                         (!self.busy && self.edit_draft.text() != note.body())
                                             .then_some(AppMessage::Notes(Message::Save)),
@@ -605,6 +607,14 @@ impl AppModel {
                                     (!self.busy).then_some(AppMessage::Notes(Message::Archive)),
                                 ),
                         )
+                        .push(
+                            widget::button(widget::text(fl!("add-structure")))
+                                .style(crate::theme::primary_pill)
+                                .on_press_maybe(
+                                    (!self.busy)
+                                        .then_some(AppMessage::Notes(Message::StartStructure)),
+                                ),
+                        )
                         .spacing(8),
                 )
                 .spacing(8)
@@ -617,7 +627,7 @@ impl AppModel {
                 )
                 .push(
                     widget::button(widget::text(fl!("restore-note")))
-                        .style(widget::button::primary)
+                        .style(crate::theme::primary_pill)
                         .on_press_maybe(
                             (!self.busy).then_some(AppMessage::Notes(Message::Restore)),
                         ),
@@ -643,7 +653,7 @@ impl AppModel {
             )
             .push(
                 widget::button(widget::text(fl!("add-note")))
-                    .style(widget::button::primary)
+                    .style(crate::theme::primary_pill)
                     .on_press_maybe(
                         (!self.busy && !self.editing).then_some(AppMessage::Notes(Message::Add)),
                     ),

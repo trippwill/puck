@@ -360,7 +360,7 @@ mod tests {
     fn domain_ids_parse_from_their_display_form() {
         let note = Note::create("Some body");
         let collection = Collection::new("Hosts");
-        let record = collection.new_record();
+        let record = collection.new_record("Alpha").unwrap();
         let field_def = Text::def("Hostname");
 
         assert_eq!(note.id().to_string().parse::<NoteId>().unwrap(), note.id());

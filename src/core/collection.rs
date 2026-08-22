@@ -9,7 +9,7 @@ use super::uuidv7_id;
 uuidv7_id!(CollectionId, "A unique collection identifier.");
 
 /// An ordered set of records.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Collection {
     id: CollectionId,
     name: Box<str>,
@@ -43,9 +43,12 @@ impl Collection {
     }
 
     /// Creates a new record owned by this collection.
-    #[must_use]
-    pub fn new_record(&self) -> Record {
-        Record::new(self)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the label is empty after trimming.
+    pub fn new_record(&self, label: &str) -> Result<Record, super::record::RecordError> {
+        Record::new(self, label)
     }
 
     /// Creates a collection from the given ID and name.
@@ -77,8 +80,8 @@ mod tests {
     #[test]
     fn records_inherit_collection_identity() {
         let collection = Collection::new("Hosts");
-        let first = collection.new_record();
-        let second = collection.new_record();
+        let first = collection.new_record("Alpha").unwrap();
+        let second = collection.new_record("Beta").unwrap();
 
         assert_eq!(first.collection_id(), collection.id());
         assert_eq!(second.collection_id(), collection.id());

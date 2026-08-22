@@ -28,6 +28,7 @@ fn main() -> iced::Result {
         puck::app::AppModel::view,
     )
     .title(puck::app::AppModel::title)
+    .theme(|_: &puck::app::AppModel| puck::theme::puck())
     .executor::<iced::executor::Default>()
     .window(iced::window::Settings {
         min_size: Some(iced::Size::new(360.0, 180.0)),

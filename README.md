@@ -27,7 +27,7 @@ note_id=$(mise run ctl -- notes.puck note add "Remember this")
 mise run ctl -- notes.puck note read "$note_id"
 
 collection_id=$(mise run ctl -- notes.puck collection add Tasks)
-record_id=$(mise run ctl -- notes.puck record add "$collection_id")
+record_id=$(mise run ctl -- notes.puck record add "$collection_id" "Ship Puck")
 title_id=$(mise run ctl -- notes.puck field-def add text Title)
 mise run ctl -- notes.puck field set "$record_id" "$title_id" "Ship Puck"
 mise run ctl -- notes.puck field read "$record_id" "$title_id"

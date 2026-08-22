@@ -3,7 +3,9 @@
 
 //! The puck application root.
 
+mod collections;
 mod notes;
+mod structure;
 
 use std::path::PathBuf;
 
@@ -11,8 +13,10 @@ use iced::widget::{self, text_editor};
 use iced::{Alignment, Element, Length, Task};
 use rfd::AsyncFileDialog;
 
+use self::collections::{CollectionMessage, CollectionsState};
 pub use self::notes::Message as NoteMessage;
 use self::notes::{NoteList, SelectedNote};
+use self::structure::{StructureDraft, StructureMessage};
 use crate::core::prelude::*;
 use crate::data::prelude::*;
 use crate::fl;
@@ -20,6 +24,9 @@ use crate::fl;
 /// The application model for an open Puck document.
 pub struct AppModel {
     document: Option<Document>,
+    workspace: Workspace,
+    collections: CollectionsState,
+    structure: Option<StructureDraft>,
     list: NoteList,
     summaries: Vec<NoteSummary>,
     selected_id: Option<NoteId>,
@@ -37,10 +44,24 @@ pub struct AppModel {
 pub enum Message {
     ClearError,
     CloseDocument,
+    Collections(CollectionMessage),
     DocumentLoaded(Result<Option<Document>, String>),
     NewDocument,
     Notes(NoteMessage),
     OpenDocument,
+    ShowWorkspace(Workspace),
+    Structure(StructureMessage),
+}
+
+/// A top-level workspace in an open document.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum Workspace {
+    /// Free-form note capture and retrieval.
+    Notes,
+    /// Structured collection and record retrieval.
+    Collections,
+    /// Building a record from selected note text.
+    Structure,
 }
 
 impl AppModel {
@@ -48,6 +69,9 @@ impl AppModel {
         let busy = document_path.is_some();
         let app = Self {
             document: None,
+            workspace: Workspace::Notes,
+            collections: CollectionsState::default(),
+            structure: None,
             list: NoteList::Pile,
             summaries: Vec::new(),
             selected_id: None,
@@ -105,13 +129,17 @@ impl AppModel {
                     .align_y(Alignment::Center),
                 )
                 .padding(12)
-                .style(widget::container::bordered_box),
+                .style(crate::theme::panel),
             );
         }
 
         if self.document.is_some() {
             content = content.push(self.document_actions());
-            content = content.push(self.notes_view());
+            content = content.push(match self.workspace {
+                Workspace::Notes => self.notes_view(),
+                Workspace::Collections => self.collections_view(),
+                Workspace::Structure => self.structure_view(),
+            });
         } else {
             content = content.push(self.landing_view());
         }
@@ -130,6 +158,9 @@ impl AppModel {
             Message::DocumentLoaded(result) => self.document_loaded(result),
             Message::CloseDocument => self.close_document(),
             Message::Notes(message) => self.update_notes(message),
+            Message::Collections(message) => self.update_collections(message),
+            Message::ShowWorkspace(workspace) => self.show_workspace(workspace),
+            Message::Structure(message) => self.update_structure(message),
             Message::ClearError => {
                 self.error = None;
                 Task::none()
@@ -143,7 +174,7 @@ impl AppModel {
             .push(widget::text(fl!("landing-description")))
             .push(
                 widget::button(widget::text(fl!("new-document")))
-                    .style(widget::button::primary)
+                    .style(crate::theme::primary_pill)
                     .on_press_maybe((!self.busy).then_some(Message::NewDocument)),
             )
             .push(
@@ -162,16 +193,51 @@ impl AppModel {
 
     fn document_actions(&self) -> Element<'_, Message> {
         widget::row![
+            widget::button(widget::text(fl!("notes")))
+                .style(if self.workspace == Workspace::Notes {
+                    crate::theme::selected
+                } else {
+                    widget::button::text
+                })
+                .on_press_maybe(
+                    (!self.busy
+                        && !self.editing
+                        && self.structure.is_none()
+                        && self.workspace != Workspace::Notes)
+                        .then_some(Message::ShowWorkspace(Workspace::Notes)),
+                ),
+            widget::button(widget::text(fl!("collections")))
+                .style(if self.workspace == Workspace::Collections {
+                    crate::theme::selected
+                } else {
+                    widget::button::text
+                })
+                .on_press_maybe(
+                    (!self.busy
+                        && !self.editing
+                        && self.structure.is_none()
+                        && self.workspace != Workspace::Collections)
+                        .then_some(Message::ShowWorkspace(Workspace::Collections)),
+                ),
             widget::Space::new().width(Length::Fill),
             widget::button(widget::text(fl!("close-document")))
                 .style(widget::button::text)
-                .on_press_maybe((!self.busy && !self.editing).then_some(Message::CloseDocument),),
+                .on_press_maybe(
+                    (!self.busy && !self.editing && self.structure.is_none())
+                        .then_some(Message::CloseDocument),
+                ),
             widget::button(widget::text(fl!("new-document")))
                 .style(widget::button::text)
-                .on_press_maybe((!self.busy && !self.editing).then_some(Message::NewDocument)),
+                .on_press_maybe(
+                    (!self.busy && !self.editing && self.structure.is_none())
+                        .then_some(Message::NewDocument),
+                ),
             widget::button(widget::text(fl!("open-document")))
-                .style(widget::button::primary)
-                .on_press_maybe((!self.busy && !self.editing).then_some(Message::OpenDocument)),
+                .style(crate::theme::primary_pill)
+                .on_press_maybe(
+                    (!self.busy && !self.editing && self.structure.is_none())
+                        .then_some(Message::OpenDocument),
+                ),
         ]
         .spacing(8)
         .align_y(Alignment::Center)
@@ -234,7 +300,10 @@ impl AppModel {
         match result {
             Ok(Some(document)) => {
                 self.document = Some(document.clone());
+                self.workspace = Workspace::Notes;
                 self.reset_notes();
+                self.reset_collections();
+                self.structure = None;
                 self.busy = true;
                 notes::load_summaries(document, NoteList::Pile)
             }
@@ -251,9 +320,23 @@ impl AppModel {
             return Task::none();
         }
         self.document = None;
+        self.workspace = Workspace::Notes;
         self.reset_notes();
+        self.reset_collections();
+        self.structure = None;
         self.error = None;
         Task::none()
+    }
+
+    fn show_workspace(&mut self, workspace: Workspace) -> Task<Message> {
+        if self.busy || self.editing || self.workspace == workspace {
+            return Task::none();
+        }
+        self.workspace = workspace;
+        match workspace {
+            Workspace::Collections => self.load_collections(),
+            Workspace::Notes | Workspace::Structure => Task::none(),
+        }
     }
 }
 

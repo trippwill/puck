@@ -19,6 +19,55 @@ use super::query_trait::Query;
 use crate::core::prelude::*;
 use crate::data::SqlFieldType;
 
+/// A field definition annotated for a selected collection.
+#[derive(Debug, Clone)]
+pub struct CollectionFieldDef {
+    /// The active field definition.
+    pub definition: AnyFieldDef,
+    /// Whether an active record in the collection already uses the definition.
+    pub used_in_collection: bool,
+}
+
+/// A compact record projection for collection lists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordSummary {
+    /// The source record ID.
+    pub id: RecordId,
+    /// The record's explicit display label.
+    pub label: String,
+    /// The number of active fields on the record.
+    pub field_count: u32,
+    /// The note the record was structured from, if any.
+    pub source_note_id: Option<NoteId>,
+}
+
+/// A field value paired with its definition name.
+#[derive(Debug, Clone)]
+pub struct NamedField {
+    /// The field definition's display name.
+    pub name: String,
+    /// The typed field value.
+    pub field: AnyField,
+}
+
+/// A record and its active named fields.
+#[derive(Debug, Clone)]
+pub struct RecordDetail {
+    /// The record.
+    pub record: Record,
+    /// Active fields ordered by definition ID.
+    pub fields: Vec<NamedField>,
+}
+
+/// A source note in either active or archived state.
+#[derive(Debug, Clone)]
+pub enum SourceNote {
+    /// A note in the active pile.
+    Pile(PileNote),
+    /// A note in the archive.
+    Archive(ArchiveNote),
+}
+
 /// A query for a pile note by ID.
 ///
 /// Produces an `Option` containing [`PileNote`].
@@ -198,7 +247,7 @@ impl Query for RecordById {
     fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
         conn.query_row(
             r"
-            SELECT records.collection_id
+            SELECT records.collection_id, records.label, records.source_note_id
             FROM records
             JOIN collections ON collections.id = records.collection_id
             WHERE records.id = ?1
@@ -206,7 +255,17 @@ impl Query for RecordById {
                 AND collections.deleted = 0
             ",
             [*self.0.as_uuid()],
-            |row| Ok(Record::restore(self.0, CollectionId::restore(row.get(0)?))),
+            |row| {
+                Record::restore(
+                    self.0,
+                    CollectionId::restore(row.get(0)?),
+                    &row.get::<_, String>(1)?,
+                    row.get::<_, Option<uuid::Uuid>>(2)?.map(NoteId::restore),
+                )
+                .map_err(|error| {
+                    SqlError::FromSqlConversionFailure(1, SqlType::Text, Box::new(error))
+                })
+            },
         )
         .optional()
         .map_err(Into::into)
@@ -222,6 +281,50 @@ impl Query for RecordsByCollection {
 
     fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
         stored_records(conn, self.0, false)
+    }
+}
+
+/// A query for compact records in a collection ordered by ID.
+///
+/// Produces a `Vec` of [`RecordSummary`] values.
+pub struct RecordSummariesByCollection(pub CollectionId);
+impl Query for RecordSummariesByCollection {
+    type Output = Vec<RecordSummary>;
+
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
+        let mut statement = conn.prepare(
+            r"
+            SELECT
+                records.id,
+                records.label,
+                records.source_note_id,
+                count(field_defs.id)
+            FROM records
+            JOIN collections ON collections.id = records.collection_id
+            LEFT JOIN fields
+                ON fields.record_id = records.id
+                AND fields.deleted = 0
+            LEFT JOIN field_defs
+                ON field_defs.id = fields.field_def_id
+                AND field_defs.deleted = 0
+            WHERE records.collection_id = ?1
+                AND records.deleted = 0
+                AND collections.deleted = 0
+            GROUP BY records.id
+            ORDER BY records.id
+            ",
+        )?;
+        statement
+            .query_map([*self.0.as_uuid()], |row| {
+                Ok(RecordSummary {
+                    id: RecordId::restore(row.get(0)?),
+                    label: row.get(1)?,
+                    source_note_id: row.get::<_, Option<uuid::Uuid>>(2)?.map(NoteId::restore),
+                    field_count: row.get(3)?,
+                })
+            })?
+            .collect::<SqlResult<_>>()
+            .map_err(Into::into)
     }
 }
 
@@ -264,6 +367,46 @@ impl Query for FieldDefs {
 
     fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
         stored_field_defs(conn, false)
+    }
+}
+
+/// A query for all active field definitions annotated for a collection.
+///
+/// Definitions already used by active records in the collection sort first.
+pub struct FieldDefsForCollection(pub CollectionId);
+impl Query for FieldDefsForCollection {
+    type Output = Vec<CollectionFieldDef>;
+
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
+        let mut statement = conn.prepare(
+            r"
+            SELECT
+                field_defs.id,
+                field_defs.name,
+                field_defs.type,
+                EXISTS (
+                    SELECT 1
+                    FROM fields
+                    JOIN records ON records.id = fields.record_id
+                    WHERE fields.field_def_id = field_defs.id
+                        AND fields.deleted = 0
+                        AND records.deleted = 0
+                        AND records.collection_id = ?1
+                ) AS used_in_collection
+            FROM field_defs
+            WHERE field_defs.deleted = 0
+            ORDER BY used_in_collection DESC, field_defs.name, field_defs.id
+            ",
+        )?;
+        statement
+            .query_map([*self.0.as_uuid()], |row| {
+                Ok(CollectionFieldDef {
+                    definition: read_field_def(row)?,
+                    used_in_collection: row.get(3)?,
+                })
+            })?
+            .collect::<SqlResult<_>>()
+            .map_err(Into::into)
     }
 }
 
@@ -322,6 +465,73 @@ impl Query for FieldsByRecord {
     }
 }
 
+/// A query for a record and its active named fields.
+pub struct RecordDetailById(pub RecordId);
+impl Query for RecordDetailById {
+    type Output = Option<RecordDetail>;
+
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
+        let Some(record) = RecordById(self.0).run(conn)? else {
+            return Ok(None);
+        };
+        let mut statement = conn.prepare(
+            r"
+            SELECT
+                fields.record_id,
+                fields.field_def_id,
+                fields.type,
+                fields.value,
+                field_defs.name
+            FROM fields
+            JOIN field_defs ON field_defs.id = fields.field_def_id
+            WHERE fields.record_id = ?1
+                AND fields.deleted = 0
+                AND field_defs.deleted = 0
+            ORDER BY fields.field_def_id
+            ",
+        )?;
+        let fields = statement
+            .query_map([*self.0.as_uuid()], |row| {
+                Ok(NamedField {
+                    field: read_field(row)?,
+                    name: row.get(4)?,
+                })
+            })?
+            .collect::<SqlResult<_>>()?;
+        Ok(Some(RecordDetail { record, fields }))
+    }
+}
+
+/// A query for an active or archived source note by ID.
+pub struct SourceNoteById(pub NoteId);
+impl Query for SourceNoteById {
+    type Output = Option<SourceNote>;
+
+    fn run(self, conn: &SyncConnection) -> Result<Self::Output, DocumentError> {
+        let stored = conn
+            .query_row(
+                r"
+                SELECT id, body, revision, created_at, updated_at, archived
+                FROM notes
+                WHERE id = ?1 AND deleted = 0
+                ",
+                [*self.0.as_uuid()],
+                |row| Ok((StoredNote::read(row)?, row.get::<_, bool>(5)?)),
+            )
+            .optional()?;
+        stored
+            .map(|(stored, archived)| {
+                if archived {
+                    stored.into_archive_note().map(SourceNote::Archive)
+                } else {
+                    stored.into_note().map(SourceNote::Pile)
+                }
+            })
+            .transpose()
+            .map_err(Into::into)
+    }
+}
+
 /// A query for fields marked for deletion on an active record.
 ///
 /// Produces a `Vec` of [`AnyField`] values.
@@ -358,7 +568,7 @@ fn stored_records(
 ) -> Result<Vec<Record>, DocumentError> {
     let mut statement = conn.prepare(
         r"
-        SELECT records.id
+        SELECT records.id, records.label, records.source_note_id
         FROM records
         JOIN collections ON collections.id = records.collection_id
         WHERE records.collection_id = ?1
@@ -369,10 +579,13 @@ fn stored_records(
     )?;
     statement
         .query_map(params![*collection_id.as_uuid(), deleted], |row| {
-            Ok(Record::restore(
+            Record::restore(
                 RecordId::restore(row.get(0)?),
                 collection_id,
-            ))
+                &row.get::<_, String>(1)?,
+                row.get::<_, Option<uuid::Uuid>>(2)?.map(NoteId::restore),
+            )
+            .map_err(|error| SqlError::FromSqlConversionFailure(1, SqlType::Text, Box::new(error)))
         })?
         .collect::<SqlResult<_>>()
         .map_err(Into::into)

@@ -172,18 +172,33 @@ impl Command {
     fn upsert_record(tx: &Transaction, record: &Record) -> SqlResult<usize> {
         let changed = tx.execute(
             r"
-            INSERT INTO records (id, collection_id)
-            SELECT ?1, ?2
+            INSERT INTO records (id, collection_id, label, source_note_id)
+            SELECT ?1, ?2, ?3, ?4
             WHERE EXISTS (
                 SELECT 1
                 FROM collections
                 WHERE id = ?2 AND deleted = 0
             )
+            AND (
+                ?4 IS NULL
+                OR EXISTS (
+                    SELECT 1
+                    FROM notes
+                    WHERE id = ?4 AND deleted = 0
+                )
+            )
             ON CONFLICT(id) DO UPDATE SET
-                collection_id = excluded.collection_id
+                collection_id = excluded.collection_id,
+                label = excluded.label,
+                source_note_id = excluded.source_note_id
             WHERE records.deleted = 0
             ",
-            params![*record.id().as_uuid(), *record.collection_id().as_uuid()],
+            params![
+                *record.id().as_uuid(),
+                *record.collection_id().as_uuid(),
+                record.label(),
+                record.source_note_id().map(|id| *id.as_uuid()),
+            ],
         )?;
         require_one(changed)
     }

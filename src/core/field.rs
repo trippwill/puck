@@ -4,6 +4,9 @@
 //! Typed field definitions and record values.
 
 use std::marker::PhantomData;
+use std::str::FromStr;
+
+use thiserror::Error;
 
 use super::record::{Record, RecordId};
 use super::uuidv7_id;
@@ -14,10 +17,61 @@ mod sealed {
 
 uuidv7_id!(FieldDefId, "A unique field-definition identifier.");
 
+/// A built-in field kind.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum FieldKind {
+    /// Free-form text.
+    Text,
+    /// A Boolean value.
+    Boolean,
+    /// A signed integer.
+    Integer,
+    /// A calendar date.
+    Date,
+    /// A wall-clock time.
+    Time,
+    /// A Unix timestamp.
+    Timestamp,
+}
+
+impl FieldKind {
+    /// All supported field kinds.
+    pub const ALL: [Self; 6] = [
+        Self::Text,
+        Self::Boolean,
+        Self::Integer,
+        Self::Date,
+        Self::Time,
+        Self::Timestamp,
+    ];
+}
+
+impl std::fmt::Display for FieldKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Text => "Text",
+            Self::Boolean => "Boolean",
+            Self::Integer => "Integer",
+            Self::Date => "Date",
+            Self::Time => "Time",
+            Self::Timestamp => "Timestamp",
+        })
+    }
+}
+
+/// An invalid textual field value.
+#[derive(Debug, Error)]
+#[error("Invalid {kind} value {value:?}: expected {expected}")]
+pub struct FieldValueError {
+    kind: FieldKind,
+    value: String,
+    expected: &'static str,
+}
+
 /// A built-in field type and its Rust value type.
 pub trait FieldType: self::sealed::Sealed + Sized {
     /// The Rust value type for this field type.
-    type Value;
+    type Value: Clone;
 
     /// Creates a typed field definition with a new ID.
     #[must_use]
@@ -31,26 +85,26 @@ pub trait FieldType: self::sealed::Sealed + Sized {
 }
 
 /// Text stored as a [`String`].
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Text;
 /// A Boolean value.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Boolean;
 /// A signed 64-bit integer.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Integer;
 /// A calendar date without a time or offset.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Date;
 /// A wall-clock time without a date or offset.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Time;
 /// A unix epoch timestamp in milliseconds since 1970-01-01T00:00:00Z.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Timestamp;
 
 /// A typed value belonging to a record and field definition.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Field<T: FieldType> {
     def_id: FieldDefId,
     record_id: RecordId,
@@ -145,7 +199,7 @@ impl AnyField {
 }
 
 /// A definition that supports values of field type `T`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FieldDef<T: FieldType> {
     id: FieldDefId,
     name: Box<str>,
@@ -181,7 +235,7 @@ impl<T: FieldType> FieldDef<T> {
 }
 
 /// A field value of any supported type.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AnyField {
     /// A text value.
     Text(Field<Text>),
@@ -198,7 +252,7 @@ pub enum AnyField {
 }
 
 /// A field definition of any supported type.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AnyFieldDef {
     /// A text definition.
     Text(FieldDef<Text>),
@@ -239,6 +293,81 @@ impl AnyFieldDef {
             AnyFieldDef::Time(def) => def.name(),
             AnyFieldDef::Timestamp(def) => def.name(),
         }
+    }
+
+    /// Returns the definition's field kind.
+    #[must_use]
+    pub const fn kind(&self) -> FieldKind {
+        match self {
+            Self::Text(_) => FieldKind::Text,
+            Self::Boolean(_) => FieldKind::Boolean,
+            Self::Integer(_) => FieldKind::Integer,
+            Self::Date(_) => FieldKind::Date,
+            Self::Time(_) => FieldKind::Time,
+            Self::Timestamp(_) => FieldKind::Timestamp,
+        }
+    }
+
+    /// Creates a typed field by parsing a textual value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the value does not match this definition's kind.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the built-in date or time format description is invalid.
+    pub fn new_field_from_str(
+        &self,
+        record: &Record,
+        value: &str,
+    ) -> Result<AnyField, FieldValueError> {
+        match self {
+            Self::Text(def) => Ok(AnyField::Text(record.new_field(def, value.to_owned()))),
+            Self::Boolean(def) => parse(value, self.kind(), "boolean (true or false)")
+                .map(|value| AnyField::Boolean(record.new_field(def, value))),
+            Self::Integer(def) => parse(value, self.kind(), "integer")
+                .map(|value| AnyField::Integer(record.new_field(def, value))),
+            Self::Date(def) => {
+                let format = time::format_description::parse_borrowed::<2>("[year]-[month]-[day]")
+                    .expect("valid date format");
+                time::Date::parse(value, &format)
+                    .map(|value| AnyField::Date(record.new_field(def, value)))
+                    .map_err(|_| invalid_value(value, self.kind(), "date (YYYY-MM-DD)"))
+            }
+            Self::Time(def) => {
+                let format =
+                    time::format_description::parse_borrowed::<2>("[hour]:[minute]:[second]")
+                        .expect("valid time format");
+                time::Time::parse(value, &format)
+                    .map(|value| AnyField::Time(record.new_field(def, value)))
+                    .map_err(|_| invalid_value(value, self.kind(), "time (HH:MM:SS)"))
+            }
+            Self::Timestamp(def) => value
+                .parse()
+                .ok()
+                .and_then(|milliseconds| time::Timestamp::from_milliseconds(milliseconds).ok())
+                .map(|value| AnyField::Timestamp(record.new_field(def, value)))
+                .ok_or_else(|| invalid_value(value, self.kind(), "timestamp (Unix milliseconds)")),
+        }
+    }
+}
+
+fn parse<T: FromStr>(
+    value: &str,
+    kind: FieldKind,
+    expected: &'static str,
+) -> Result<T, FieldValueError> {
+    value
+        .parse()
+        .map_err(|_| invalid_value(value, kind, expected))
+}
+
+fn invalid_value(value: &str, kind: FieldKind, expected: &'static str) -> FieldValueError {
+    FieldValueError {
+        kind,
+        value: value.to_owned(),
+        expected,
     }
 }
 
@@ -291,7 +420,7 @@ mod tests {
     #[test]
     fn restore_preserves_definition_and_field_data() {
         let collection = Collection::new("Hosts");
-        let record = collection.new_record();
+        let record = collection.new_record("Alpha").unwrap();
         let def_id = FieldDefId::new();
         let def = FieldDef::<Text>::restore(def_id, "Hostname");
         let field = Field::<Text>::restore(def_id, record.id(), String::from("alpha-01"));
@@ -305,7 +434,7 @@ mod tests {
 
     #[test]
     fn built_in_field_types_accept_their_values() {
-        let record = Collection::new("Values").new_record();
+        let record = Collection::new("Values").new_record("Value").unwrap();
         let date = time::Date::from_calendar_date(2026, Month::August, 18).unwrap();
         let time = time::Time::from_hms(15, 51, 0).unwrap();
         let timestamp = timestamp!(1_787_069_460);
@@ -326,5 +455,24 @@ mod tests {
                 .val(),
             timestamp
         );
+    }
+
+    #[test]
+    fn definitions_parse_their_textual_values() {
+        let record = Collection::new("Values").new_record("Value").unwrap();
+
+        assert!(matches!(
+            AnyFieldDef::Boolean(Boolean::def("Done"))
+                .new_field_from_str(&record, "true"),
+            Ok(AnyField::Boolean(field)) if *field.val()
+        ));
+        assert!(matches!(
+            AnyFieldDef::Integer(Integer::def("Count")).new_field_from_str(&record, "not a number"),
+            Err(FieldValueError { .. })
+        ));
+        assert!(matches!(
+            AnyFieldDef::Date(Date::def("Due")).new_field_from_str(&record, "2026-08-22"),
+            Ok(AnyField::Date(_))
+        ));
     }
 }

@@ -33,6 +33,8 @@ pub enum DocumentError {
     MigrationUnavailable(PathBuf, SchemaVersion, SchemaVersion),
     #[error("Invalid persisted note: {0}")]
     InvalidNote(#[from] NoteError),
+    #[error("Invalid persisted record: {0}")]
+    InvalidRecord(#[from] crate::core::RecordError),
 }
 
 impl From<rusqlite::Error> for DocumentError {
@@ -485,10 +487,13 @@ mod tests {
         let path = std::env::temp_dir().join(format!("puck-{}.db", uuid::Uuid::now_v7()));
         let document = Document::create(&path).await.unwrap();
         let collection = Collection::new("Values");
-        let record = collection.new_record();
-        let second_record = collection.new_record();
+        let note = PileNote::create("Source");
+        let note_id = note.id();
+        let mut record = collection.new_record("First").unwrap();
+        record.set_source_note_id(Some(note_id));
+        let second_record = collection.new_record("Second").unwrap();
         let other_collection = Collection::new("Other");
-        let other_record = other_collection.new_record();
+        let other_record = other_collection.new_record("Other").unwrap();
         let text_def = Text::def("Text");
         let boolean_def = Boolean::def("Boolean");
         let integer_def = Integer::def("Integer");
@@ -537,6 +542,7 @@ mod tests {
 
         document
             .execute(vec![
+                Command::AddNote(note),
                 Command::UpsertCollection(collection),
                 Command::UpsertRecord(record),
                 Command::UpsertRecord(second_record),
@@ -668,6 +674,54 @@ mod tests {
             .unwrap();
         assert_eq!(stored_record.id(), record_id);
         assert_eq!(stored_record.collection_id(), collection_id);
+        assert_eq!(stored_record.label(), "First");
+        assert_eq!(stored_record.source_note_id(), Some(note_id));
+
+        let summaries = document
+            .query(query::RecordSummariesByCollection(collection_id))
+            .await
+            .unwrap();
+        assert_eq!(summaries.len(), 2);
+        let summary = summaries
+            .iter()
+            .find(|summary| summary.id == record_id)
+            .unwrap();
+        assert_eq!(summary.label, "First");
+        assert_eq!(summary.field_count, 6);
+        assert_eq!(summary.source_note_id, Some(note_id));
+
+        let choices = document
+            .query(query::FieldDefsForCollection(collection_id))
+            .await
+            .unwrap();
+        assert_eq!(choices.len(), 6);
+        assert!(choices.iter().all(|choice| choice.used_in_collection));
+        let other_choices = document
+            .query(query::FieldDefsForCollection(other_collection_id))
+            .await
+            .unwrap();
+        assert_eq!(other_choices.len(), 6);
+        assert_eq!(
+            other_choices
+                .iter()
+                .filter(|choice| choice.used_in_collection)
+                .count(),
+            1
+        );
+
+        let detail = document
+            .query(query::RecordDetailById(record_id))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(detail.record.label(), "First");
+        assert_eq!(detail.fields.len(), 6);
+        assert!(detail.fields.iter().any(|field| field.name == "Text"
+            && matches!(&field.field, AnyField::Text(value) if value.val() == "hello")));
+        assert!(matches!(
+            document.query(query::SourceNoteById(note_id)).await.unwrap(),
+            Some(query::SourceNote::Pile(note)) if note.body() == "Source"
+        ));
 
         assert!(matches!(
             document.query(query::FieldDefById(text_id)).await.unwrap(),
@@ -798,6 +852,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cleaning_a_source_note_preserves_its_record() {
+        let path = std::env::temp_dir().join(format!("puck-{}.db", uuid::Uuid::now_v7()));
+        let document = Document::create(&path).await.unwrap();
+        let note = PileNote::create("Source");
+        let note_id = note.id();
+        let archived = note.clone().archive();
+        let collection = Collection::new("Projects");
+        let mut record = collection.new_record("Release").unwrap();
+        let record_id = record.id();
+        record.set_source_note_id(Some(note_id));
+
+        document
+            .execute(vec![
+                Command::AddNote(note),
+                Command::UpsertCollection(collection),
+                Command::UpsertRecord(record),
+                Command::ArchiveNote(archived),
+                Command::DeleteNote(note_id),
+                Command::Clean,
+            ])
+            .await
+            .unwrap();
+
+        let stored = document
+            .query(query::RecordById(record_id))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.label(), "Release");
+        assert_eq!(stored.source_note_id(), None);
+
+        drop(document);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
     async fn commands_roll_back_as_one_transaction() {
         let path = std::env::temp_dir().join(format!("puck-{}.db", uuid::Uuid::now_v7()));
         let document = Document::create(&path).await.unwrap();
@@ -827,9 +917,9 @@ mod tests {
         let deleted_collection_id = deleted_collection.id();
         let active_collection = Collection::new("Active collection");
         let active_collection_id = active_collection.id();
-        let deleted_record = active_collection.new_record();
+        let deleted_record = active_collection.new_record("Deleted").unwrap();
         let deleted_record_id = deleted_record.id();
-        let active_record = active_collection.new_record();
+        let active_record = active_collection.new_record("Active").unwrap();
         let active_record_id = active_record.id();
         let deleted_def = Text::def("Deleted definition");
         let deleted_def_id = deleted_def.id();
@@ -934,7 +1024,8 @@ mod tests {
                 .is_err()
         );
 
-        let record_with_deleted_parent = Record::restore(RecordId::new(), deleted_collection_id);
+        let record_with_deleted_parent =
+            Record::restore(RecordId::new(), deleted_collection_id, "Orphan", None).unwrap();
         assert!(
             document
                 .execute(vec![Command::UpsertRecord(record_with_deleted_parent)])

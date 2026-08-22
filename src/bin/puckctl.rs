@@ -23,6 +23,17 @@ struct Cli {
     verbosity: clap_verbosity_flag::Verbosity,
 }
 
+fn field_value_expectation(kind: puck::core::FieldKind) -> &'static str {
+    match kind {
+        puck::core::FieldKind::Text => "text",
+        puck::core::FieldKind::Boolean => "boolean (true or false)",
+        puck::core::FieldKind::Integer => "integer",
+        puck::core::FieldKind::Date => "date (YYYY-MM-DD)",
+        puck::core::FieldKind::Time => "time (HH:MM:SS)",
+        puck::core::FieldKind::Timestamp => "timestamp (Unix milliseconds)",
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum Commands {
     /// Create a new Puck document.
@@ -118,7 +129,10 @@ enum CollectionCommands {
 #[derive(Debug, Subcommand)]
 enum RecordCommands {
     /// Add a record to a collection.
-    Add { collection: CollectionId },
+    Add {
+        collection: CollectionId,
+        label: String,
+    },
     /// Move a record to another collection.
     Move {
         record: RecordId,
@@ -142,7 +156,7 @@ enum RecordCommands {
 #[derive(Debug, Subcommand)]
 enum FieldDefCommands {
     /// Add a field definition.
-    Add { kind: FieldKind, name: String },
+    Add { kind: CliFieldKind, name: String },
     /// Mark a field definition for deletion.
     Delete { definition: FieldDefId },
     /// Restore a deleted field definition.
@@ -163,7 +177,7 @@ enum FieldDefCommands {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-enum FieldKind {
+enum CliFieldKind {
     Text,
     Boolean,
     Integer,
@@ -212,6 +226,9 @@ enum CliError {
 
     #[error(transparent)]
     Note(#[from] NoteError),
+
+    #[error(transparent)]
+    Record(#[from] RecordError),
 
     #[error("{kind} {id} not found")]
     NotFound { kind: &'static str, id: String },
@@ -423,12 +440,12 @@ async fn run_collection(document: &Document, command: CollectionCommands) -> Res
 
 async fn run_record(document: &Document, command: RecordCommands) -> Result<(), CliError> {
     match command {
-        RecordCommands::Add { collection } => {
+        RecordCommands::Add { collection, label } => {
             let collection = document
                 .query(query::CollectionById(collection))
                 .await?
                 .ok_or_else(|| not_found("Collection", collection.to_string()))?;
-            let record = collection.new_record();
+            let record = collection.new_record(&label)?;
             let id = record.id();
             document
                 .execute(vec![Command::UpsertRecord(record)])
@@ -480,7 +497,12 @@ async fn run_record(document: &Document, command: RecordCommands) -> Result<(), 
                     .await?
             };
             for record in records {
-                println!("{}\t{}", record.id(), record.collection_id());
+                println!(
+                    "{}\t{}\t{}",
+                    record.id(),
+                    record.collection_id(),
+                    record.label()
+                );
             }
         }
         RecordCommands::Read { record } => {
@@ -488,7 +510,12 @@ async fn run_record(document: &Document, command: RecordCommands) -> Result<(), 
                 .query(query::RecordById(record))
                 .await?
                 .ok_or_else(|| not_found("Record", record.to_string()))?;
-            print!("{}\t{}", record.id(), record.collection_id());
+            print!(
+                "{}\t{}\t{}",
+                record.id(),
+                record.collection_id(),
+                record.label()
+            );
         }
     }
     Ok(())
@@ -498,12 +525,12 @@ async fn run_field_def(document: &Document, command: FieldDefCommands) -> Result
     match command {
         FieldDefCommands::Add { kind, name } => {
             let field_def = match kind {
-                FieldKind::Text => AnyFieldDef::Text(Text::def(&name)),
-                FieldKind::Boolean => AnyFieldDef::Boolean(Boolean::def(&name)),
-                FieldKind::Integer => AnyFieldDef::Integer(Integer::def(&name)),
-                FieldKind::Date => AnyFieldDef::Date(Date::def(&name)),
-                FieldKind::Time => AnyFieldDef::Time(Time::def(&name)),
-                FieldKind::Timestamp => AnyFieldDef::Timestamp(Timestamp::def(&name)),
+                CliFieldKind::Text => AnyFieldDef::Text(Text::def(&name)),
+                CliFieldKind::Boolean => AnyFieldDef::Boolean(Boolean::def(&name)),
+                CliFieldKind::Integer => AnyFieldDef::Integer(Integer::def(&name)),
+                CliFieldKind::Date => AnyFieldDef::Date(Date::def(&name)),
+                CliFieldKind::Time => AnyFieldDef::Time(Time::def(&name)),
+                CliFieldKind::Timestamp => AnyFieldDef::Timestamp(Timestamp::def(&name)),
             };
             let id = field_def.id();
             document
@@ -606,47 +633,12 @@ async fn run_field(document: &Document, command: FieldCommands) -> Result<(), Cl
                 .query(query::FieldDefById(definition))
                 .await?
                 .ok_or_else(|| not_found("Field definition", definition.to_string()))?;
-            let field = match field_def {
-                AnyFieldDef::Text(def) => AnyField::Text(stored_record.new_field(&def, value)),
-                AnyFieldDef::Boolean(def) => {
-                    let parsed = match value.as_str() {
-                        "true" => true,
-                        "false" => false,
-                        _ => return Err(invalid_value(&value, "boolean (true or false)")),
-                    };
-                    AnyField::Boolean(stored_record.new_field(&def, parsed))
-                }
-                AnyFieldDef::Integer(def) => {
-                    let parsed = value
-                        .parse()
-                        .map_err(|_| invalid_value(&value, "integer"))?;
-                    AnyField::Integer(stored_record.new_field(&def, parsed))
-                }
-                AnyFieldDef::Date(def) => {
-                    let format =
-                        time::format_description::parse_borrowed::<2>("[year]-[month]-[day]")
-                            .expect("valid date format");
-                    let parsed = time::Date::parse(&value, &format)
-                        .map_err(|_| invalid_value(&value, "date (YYYY-MM-DD)"))?;
-                    AnyField::Date(stored_record.new_field(&def, parsed))
-                }
-                AnyFieldDef::Time(def) => {
-                    let format =
-                        time::format_description::parse_borrowed::<2>("[hour]:[minute]:[second]")
-                            .expect("valid time format");
-                    let parsed = time::Time::parse(&value, &format)
-                        .map_err(|_| invalid_value(&value, "time (HH:MM:SS)"))?;
-                    AnyField::Time(stored_record.new_field(&def, parsed))
-                }
-                AnyFieldDef::Timestamp(def) => {
-                    let milliseconds = value
-                        .parse()
-                        .map_err(|_| invalid_value(&value, "timestamp (Unix milliseconds)"))?;
-                    let parsed = time::Timestamp::from_milliseconds(milliseconds)
-                        .map_err(|_| invalid_value(&value, "timestamp (Unix milliseconds)"))?;
-                    AnyField::Timestamp(stored_record.new_field(&def, parsed))
-                }
-            };
+            let field = field_def
+                .new_field_from_str(&stored_record, &value)
+                .map_err(|_error| CliError::InvalidValue {
+                    value,
+                    expected: field_value_expectation(field_def.kind()),
+                })?;
             document.execute(vec![Command::UpsertField(field)]).await?;
         }
         FieldCommands::List { record, deleted } => {
@@ -685,13 +677,6 @@ async fn run_field(document: &Document, command: FieldCommands) -> Result<(), Cl
         }
     }
     Ok(())
-}
-
-fn invalid_value(value: &str, expected: &'static str) -> CliError {
-    CliError::InvalidValue {
-        value: value.to_owned(),
-        expected,
-    }
 }
 
 fn field_def_kind(field_def: &AnyFieldDef) -> &'static str {

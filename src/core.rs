@@ -19,7 +19,7 @@
 //!
 //! let hosts = Collection::new("Hosts");
 //! let hostname = Text::def("Hostname");
-//! let host = hosts.new_record();
+//! let host = hosts.new_record("alpha-01").unwrap();
 //! let field = host.new_field(&hostname, String::from("alpha-01"));
 //!
 //! assert_eq!(field.val(), "alpha-01");
@@ -44,7 +44,9 @@ pub mod prelude {
         FieldDef,
         FieldDefId,
         FieldKey,
+        FieldKind,
         FieldType,
+        FieldValueError,
         Integer,
         Text,
         Time,
@@ -62,7 +64,7 @@ pub mod prelude {
         Pile,
         PileNote,
     };
-    pub use super::record::{Record, RecordId};
+    pub use super::record::{Record, RecordError, RecordId};
 }
 
 #[doc(inline)]

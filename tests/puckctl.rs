@@ -230,8 +230,8 @@ fn structured_data_can_be_managed() {
         format!("{collection}\tValues\n")
     );
 
-    let record = document.id(&["record", "add", &collection]);
-    let record_row = format!("{record}\t{collection}");
+    let record = document.id(&["record", "add", &collection, "Example"]);
+    let record_row = format!("{record}\t{collection}\tExample");
     assert_eq!(document.text(&["record", "read", &record]), record_row);
     assert_eq!(
         document.text(&["record", "list", &collection]),
@@ -297,7 +297,7 @@ fn records_can_be_moved() {
     let document = TestDocument::new();
     let source = document.id(&["collection", "add", "Source"]);
     let destination = document.id(&["collection", "add", "Destination"]);
-    let record = document.id(&["record", "add", &source]);
+    let record = document.id(&["record", "add", &source, "Movable"]);
     let definition = document.id(&["field-def", "add", "text", "Name"]);
     document.success(&["field", "set", &record, &definition, "value"]);
 
@@ -306,7 +306,7 @@ fn records_can_be_moved() {
     assert!(document.text(&["record", "list", &source]).is_empty());
     assert_eq!(
         document.text(&["record", "read", &record]),
-        format!("{record}\t{destination}")
+        format!("{record}\t{destination}\tMovable")
     );
     assert_eq!(
         document.text(&["field", "read", &record, &definition]),
@@ -325,7 +325,7 @@ fn records_can_be_moved() {
 fn structured_data_is_marked_then_cleaned() {
     let document = TestDocument::new();
     let collection = document.id(&["collection", "add", "Values"]);
-    let record = document.id(&["record", "add", &collection]);
+    let record = document.id(&["record", "add", &collection, "Values"]);
     let first_def = document.id(&["field-def", "add", "text", "First"]);
     let second_def = document.id(&["field-def", "add", "text", "Second"]);
     document.success(&["field", "set", &record, &first_def, "first"]);
@@ -403,7 +403,7 @@ fn structured_data_is_marked_then_cleaned() {
     assert_eq!(document.count("fields", None), 0);
     assert_eq!(document.count("collections", None), 1);
 
-    let record = document.id(&["record", "add", &collection]);
+    let record = document.id(&["record", "add", &collection, "Deleted"]);
     document.success(&["field", "set", &record, &first_def, "first"]);
     document.success(&["collection", "delete", &collection]);
     assert!(document.text(&["collection", "list"]).is_empty());
@@ -437,7 +437,7 @@ fn structured_data_is_marked_then_cleaned() {
 fn structured_failures_do_not_change_the_document() {
     let document = TestDocument::new();
     let collection = document.id(&["collection", "add", "Values"]);
-    let record = document.id(&["record", "add", &collection]);
+    let record = document.id(&["record", "add", &collection, "Failures"]);
     let missing = uuid::Uuid::now_v7().to_string();
 
     assert!(
@@ -446,7 +446,7 @@ fn structured_failures_do_not_change_the_document() {
             .contains("invalid value")
     );
     assert_not_found(
-        &document.failure(&["record", "add", &missing]),
+        &document.failure(&["record", "add", &missing, "Missing"]),
         "Collection",
         &missing,
     );
